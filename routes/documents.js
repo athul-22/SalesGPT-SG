@@ -15,4 +15,7 @@ router.post('/query', documentController.queryDocuments);
 // Route for generating sales strategy from document
 router.post('/generateSalesStrategy', documentController.generateSalesStrategy);
 
+// Route for listing all documents
+router.get('/list', documentController.listDocuments);
+
 module.exports = router;

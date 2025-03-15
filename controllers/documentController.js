@@ -1,8 +1,9 @@
 const { v4: uuidv4 } = require('uuid');
-const storageService = require('../services/storageService');
-const pdfService = require('../services/pdfService');
 const chromaService = require('../services/chromaService');
-const geminiService = require('../services/geminiService');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
+const fs = require('fs').promises;
+const path = require('path');
 
 // Upload and process document
 const uploadDocument = async (req, res) => {
@@ -12,84 +13,251 @@ const uploadDocument = async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // Get user ID from request (you may use authentication middleware)
-    const userId = req.user?.id || 'anonymous';
+    console.log(`Processing file: ${req.file.originalname} (${req.file.mimetype})`);
+    
+    const fileBuffer = req.file.buffer;
+    const fileType = req.file.mimetype;
+    let extractedText = '';
+    
+    // Extract text based on file type
+    try {
+      if (fileType === 'application/pdf' || req.file.originalname.toLowerCase().endsWith('.pdf')) {
+        console.log('Extracting text from PDF...');
+        const pdfData = await pdfParse(fileBuffer);
+        extractedText = pdfData.text;
+        console.log(`Extracted ${extractedText.length} characters from PDF`);
+      } 
+      else if (
+        fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+        fileType === 'application/msword' ||
+        req.file.originalname.toLowerCase().endsWith('.docx') ||
+        req.file.originalname.toLowerCase().endsWith('.doc')
+      ) {
+        console.log('Extracting text from DOCX/DOC...');
+        const result = await mammoth.extractRawText({ buffer: fileBuffer });
+        extractedText = result.value;
+        console.log(`Extracted ${extractedText.length} characters from DOCX/DOC`);
+      } 
+      else {
+        return res.status(400).json({ 
+          error: 'Unsupported file type', 
+          details: `File type ${fileType} is not supported. Please upload PDF or DOCX files.`
+        });
+      }
+    } catch (extractionError) {
+      console.error('Text extraction error:', extractionError);
+      return res.status(422).json({ 
+        error: 'Failed to extract text from document', 
+        details: extractionError.message
+      });
+    }
+
+    if (!extractedText || extractedText.length < 10) {
+      return res.status(422).json({ 
+        error: 'Document contains no extractable text or is too short',
+        extracted: extractedText.length 
+      });
+    }
     
     // Generate a unique document ID
     const documentId = uuidv4();
     
-    // Upload file to Google Cloud Storage
-    const fileData = await storageService.uploadFile(req.file, userId);
+    // Create collection name from original filename (sanitized)
+    const baseFileName = req.file.originalname.replace(/\.[^/.]+$/, ""); // Remove extension
+    const safeCollectionName = baseFileName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase().substring(0, 30);
+    const collectionName = `doc_${safeCollectionName}_${documentId.substring(0, 8)}`;
     
-    // Return initial response to client
+    // Prepare metadata
+    const metadata = {
+      documentId,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      fileSize: req.file.size,
+      uploadedAt: new Date().toISOString(),
+      textLength: extractedText.length,
+      collectionName
+    };
+    
+    // Return initial response to client to show upload was successful
     res.status(202).json({
       message: 'Document uploaded successfully and processing started',
       documentId,
-      fileData
+      collectionName,
+      fileData: {
+        originalName: req.file.originalname,
+        size: req.file.size,
+        mimeType: req.file.mimetype
+      }
     });
     
-    // Process file in background (after response is sent)
+    // Continue processing in background (after response is sent)
     try {
-      const result = await pdfService.processFile(fileData.fileName, documentId, userId);
-      
-      console.log('Document processed successfully:', documentId);
-      // Could store processing result in database if needed
-    } catch (processingError) {
-      console.error('Error processing document:', processingError);
-      // Could update document status in database
+      // Add document content to ChromaDB in a document-specific collection
+      await chromaService.addDocumentToCollection(extractedText, metadata, documentId, collectionName);
+      console.log(`Document added to ChromaDB collection "${collectionName}": ${documentId}`);
+    } catch (chromaError) {
+      console.error('Error adding document to ChromaDB:', chromaError.message);
+      // Nothing we can do at this point since response is already sent
     }
   } catch (error) {
     console.error('Error uploading document:', error);
     
     // If response hasn't been sent yet
     if (!res.headersSent) {
-      return res.status(500).json({ error: 'Failed to upload document' });
+      return res.status(500).json({ 
+        error: 'Failed to upload document', 
+        details: error.message
+      });
     }
   }
 };
 
-// Get document processing status and details
+// List all document collections
+const listDocuments = async (req, res) => {
+  try {
+    // Get all collections
+    const collections = await chromaService.listAllCollections();
+    
+    // Filter for document collections (they start with 'doc_')
+    const docCollections = collections.filter(col => col.name.startsWith('doc_'));
+    
+    if (!docCollections || docCollections.length === 0) {
+      return res.status(200).json({ documents: [] });
+    }
+    
+    // Get summary info for each collection
+    const documents = await Promise.all(docCollections.map(async (collection) => {
+      try {
+        const collectionInfo = await chromaService.getCollectionInfo(collection.name);
+        
+        // Extract document metadata from first chunk
+        if (collectionInfo && collectionInfo.metadatas && collectionInfo.metadatas.length > 0) {
+          const metadata = collectionInfo.metadatas[0];
+          return {
+            documentId: metadata.documentId,
+            collectionName: collection.name,
+            metadata: {
+              originalName: metadata.originalName,
+              uploadedAt: metadata.uploadedAt,
+              fileSize: metadata.fileSize,
+              textLength: metadata.textLength
+            },
+            count: collectionInfo.ids.length
+          };
+        }
+        
+        // Fallback if no metadata available
+        return {
+          documentId: collection.name,
+          collectionName: collection.name,
+          metadata: {
+            originalName: collection.name,
+            uploadedAt: new Date().toISOString()
+          },
+          count: 0
+        };
+      } catch (err) {
+        console.error(`Error getting info for collection ${collection.name}:`, err);
+        return {
+          documentId: collection.name,
+          collectionName: collection.name,
+          error: 'Failed to load collection details'
+        };
+      }
+    }));
+    
+    return res.status(200).json({
+      documents
+    });
+  } catch (error) {
+    console.error('Error listing documents:', error);
+    return res.status(500).json({ error: 'Failed to list documents' });
+  }
+};
+
+// Get document by ID
 const getDocumentById = async (req, res) => {
   try {
     const { documentId } = req.params;
-    
-    // Query ChromaDB for document chunks
-    const collection = await chromaService.getOrCreateCollection();
-    const filter = { documentId };
-    
-    // Get document metadata from first chunk
-    const result = await collection.get({
-      where: filter,
-      limit: 1
-    });
-    
-    if (!result || !result.metadatas || result.metadatas.length === 0) {
-      return res.status(404).json({ error: 'Document not found' });
+
+    if (!documentId) {
+      return res.status(400).json({ error: 'Document ID is required' });
     }
-    
-    const metadata = result.metadatas[0];
-    
-    // Return document information
-    return res.status(200).json({
-      documentId,
-      metadata
-    });
+
+    try {
+      // First, find the collection for this document
+      const collections = await chromaService.listAllCollections();
+      const docCollections = collections.filter(col => col.name.startsWith('doc_'));
+      
+      // Try to find matching collection with this document ID
+      let docCollection = null;
+      
+      for (const collection of docCollections) {
+        try {
+          const collectionInfo = await chromaService.getCollectionInfo(collection.name);
+          if (collectionInfo && collectionInfo.metadatas && collectionInfo.metadatas.length > 0) {
+            if (collectionInfo.metadatas[0].documentId === documentId) {
+              docCollection = collection.name;
+              break;
+            }
+          }
+        } catch (err) {
+          console.error(`Error checking collection ${collection.name}:`, err);
+        }
+      }
+      
+      if (!docCollection) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
+      
+      // Get full document info from the collection
+      const documentData = await chromaService.getDocumentFromCollection(documentId, docCollection);
+      
+      return res.status(200).json({
+        documentId,
+        collectionName: docCollection,
+        metadata: documentData.metadata,
+        textPreview: documentData.text.substring(0, 300) + '...'
+      });
+    } catch (chromaError) {
+      console.error("Error accessing ChromaDB:", chromaError);
+      
+      // Return a meaningful error response to the client
+      return res.status(503).json({
+        error: 'ChromaDB service unavailable',
+        message: 'Document retrieval service is currently unavailable',
+        status: 'unavailable', 
+        documentId,
+        metadata: {
+          originalName: "Document unavailable",
+          uploadedAt: new Date().toISOString(),
+          status: "Error accessing document store"
+        }
+      });
+    }
   } catch (error) {
-    console.error('Error getting document:', error);
-    return res.status(500).json({ error: 'Failed to get document' });
+    console.error("Error getting document:", error);
+    return res.status(500).json({ error: 'Failed to get document details' });
   }
 };
 
 // Query documents by text
 const queryDocuments = async (req, res) => {
   try {
-    const { query, limit } = req.body;
+    const { query, limit, collectionName } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query text is required' });
     }
     
-    const results = await chromaService.queryCollection(query, limit || 5);
+    let results;
+    if (collectionName) {
+      // Query specific collection if provided
+      results = await chromaService.queryCollection(query, limit || 5, collectionName);
+    } else {
+      // Query all document collections
+      results = await chromaService.queryAllDocumentCollections(query, limit || 5);
+    }
     
     return res.status(200).json({
       results
@@ -156,9 +324,11 @@ const generateSalesStrategy = async (req, res) => {
   }
 };
 
+// Export the controllers
 module.exports = {
   uploadDocument,
   getDocumentById,
   queryDocuments,
-  generateSalesStrategy
+  generateSalesStrategy,
+  listDocuments
 };

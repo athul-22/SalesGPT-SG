@@ -45,6 +45,29 @@ const makeRequest = (options) => {
     });
 };
 
+// Create a function to safely fetch from Apollo API with retries
+const safeApiCall = async (options, retries = 2) => {
+  try {
+    return await makeRequest(options);
+  } catch (error) {
+    // If it's a parameter issue, try to fix it
+    if (error.message.includes('missing in params') && options.path.includes('organization_id')) {
+      console.log("Attempting to fix API parameter naming...");
+      const newPath = options.path.replace('organization_id=', 'id=');
+      const newOptions = { ...options, path: newPath };
+      return await makeRequest(newOptions);
+    }
+    
+    // If retries left, wait a bit and try again
+    if (retries > 0) {
+      console.log(`Retrying API call, ${retries} attempts left...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return safeApiCall(options, retries - 1);
+    }
+    throw error;
+  }
+};
+
 // Function to clean markdown formatting from AI responses
 const cleanJsonResponse = (text) => {
     try {
@@ -62,10 +85,11 @@ const cleanJsonResponse = (text) => {
 // This function is executed when the sales strategy endpoint is hit
 const generateSalesStrategy = async (req, res) => {
     try {
-        // Get company name from request body, default to Google if not provided
+        // Get company name and location from request body
         const companyName = req.body?.companyName || 'Google';
+        const location = req.body?.location || '';  // Default to empty string if not provided
 
-        console.log(`Fetching company information for ${companyName}...`);
+        console.log(`Fetching company information for ${companyName} ${location ? 'in ' + location : ''}...`);
 
         // Create a simple fallback response in case everything fails
         const fallbackResponse = {
@@ -124,26 +148,55 @@ const generateSalesStrategy = async (req, res) => {
         };
 
         try {
-            // Step 1: Search for organization to get ID
+            // Step 1: Search for organization to get ID - now with location filtering
             const searchOptions = {
                 method: 'GET',
                 hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
                 port: 443,
-                path: `/search_organization?q_organization_name=${encodeURIComponent(companyName)}&page=1&exact_name_match=true`,
+                path: `/search_organization?q_organization_name=${encodeURIComponent(companyName)}&page=1${location ? '&organization_locations=' + encodeURIComponent(location) : ''}`,
                 headers: {
                     'x-rapidapi-key': process.env.RAPID_API_KEY || 'e2941bfeeamshf10306bfb50c2b7p1895c3jsn364eb99e3308',
                     'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
                 }
             };
 
-            const searchResponse = await makeRequest(searchOptions);
+            const searchResponse = await safeApiCall(searchOptions);
             
             if (!searchResponse.data || !searchResponse.data.organizations || searchResponse.data.organizations.length === 0) {
                 console.log(`No company information found for ${companyName}, using fallback`);
                 return res.status(200).json(fallbackResponse);
             }
 
-            const targetCompany = searchResponse.data.organizations[0];
+            let targetCompany;
+            const organizations = searchResponse.data.organizations;
+
+            // First try to find an exact match with high employee count
+            targetCompany = organizations.find(org => 
+              org.name.toLowerCase() === companyName.toLowerCase() && 
+              org.employees_count > 1000
+            );
+
+            // If not found, look for a close match with website containing the company name
+            if (!targetCompany) {
+              targetCompany = organizations.find(org => 
+                org.name.toLowerCase().includes(companyName.toLowerCase()) &&
+                org.website_url && 
+                org.website_url.toLowerCase().includes(companyName.toLowerCase())
+              );
+            }
+
+            // If still not found, just take the organization with highest employee count
+            if (!targetCompany) {
+              targetCompany = organizations.sort((a, b) => 
+                (b.employees_count || 0) - (a.employees_count || 0)
+              )[0];
+            }
+
+            // Fallback to the first result if nothing else worked
+            if (!targetCompany) {
+              targetCompany = organizations[0];
+            }
+
             const organizationId = targetCompany.id;
             
             console.log(`Found company: ${targetCompany.name} (ID: ${organizationId})`);
@@ -154,7 +207,7 @@ const generateSalesStrategy = async (req, res) => {
             try {
                 [detailsResponse, newsResponse] = await Promise.all([
                     // Get organization details
-                    makeRequest({
+                    safeApiCall({
                         method: 'GET',
                         hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
                         port: 443,
@@ -164,12 +217,12 @@ const generateSalesStrategy = async (req, res) => {
                             'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
                         }
                     }),
-                    // Get organization news
-                    makeRequest({
+                    // Get organization news - using id parameter
+                    safeApiCall({
                         method: 'GET',
                         hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
                         port: 443,
-                        path: `/organization_news?organization_id=${organizationId}&page=1`,
+                        path: `/organization_news?id=${organizationId}&page=1`,  // Using id instead of organization_id
                         headers: {
                             'x-rapidapi-key': process.env.RAPID_API_KEY || 'e2941bfeeamshf10306bfb50c2b7p1895c3jsn364eb99e3308',
                             'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
@@ -257,6 +310,7 @@ const generateSalesStrategy = async (req, res) => {
                 companyName: companyProfile.name,
                 industry: companyProfile.industry,
                 businessType: businessType,
+                headquarters: companyProfile.headquarters,  // Add this line to include location
                 companySize: {
                     annualRevenue: companyProfile.revenue,
                     employeeCount: companyProfile.employeeCount
