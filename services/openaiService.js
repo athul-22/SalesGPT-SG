@@ -46,6 +46,36 @@ class OpenAIService {
       throw error;
     }
   }
+
+  /**
+   * Generate content using OpenAI's chat completion
+   * @param {String} prompt - The prompt to generate content from
+   * @returns {Promise<String>} - Generated text content
+   */
+  async generateContent(prompt) {
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: "You are an AI assistant that generates detailed sales strategies based on company information."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 4000
+      });
+      
+      return response.choices[0].message.content;
+    } catch (error) {
+      console.error('Error generating content with OpenAI:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new OpenAIService();

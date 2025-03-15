@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "magiq-ai",
+  "private_key_id": "fc9670291bfee23aed4ae4e50c8fb333c6b466ae",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCvtvQnRSNmVPy+\nV2ORrgCEtssr/+x+XDOR4J0xE5I3xmB337FyO9GeWsxKj6kir+EJxZ8WTEjfT2u4\nAkO8sVrIyq1PQLoclvFdM0HhHuv6vtkxonhcn2susy88iY2d64tMOpWc4lhhLrPO\nph4QyPmqE+xoX1r1H7g6/9Jq+e1doHaHOPYjHSujOdw+eQ+w4ZWngU4e3F+ErVmk\nl+Kv6WAHgH5B9rukvj1uAHNB+TMxgQi3dUTbP1OO/dwKaHsaB5BCQbDw1kDsBssH\n4ZwMhovZDn3nHZzHICjzpCGTbFhsFSt4ownNMasDLXXPf/ZH/Kkh5rIO/K7BWlGL\noawhp5gBAgMBAAECggEAEeBno40lplYUJptGbn5I4DemoPHXEh34QymaZHFMyW7d\nxqRT7b7HOziamyVVfElveCqKXl7hdRKj72MPmCVlCpOQIUWBCcKTiLtbwvb95BNB\njoqseyPe6C/jqOGHrl7V26oEKaNfgXeaZHZDDcscl2CShyXYX6Lb/+ih9C88Jm+v\nAiWA8odJBbN3zAi5nWXt8xN3Y4EbSgU4nC4DSXwv9sHEGtDnBRaslTjOJi91v0JR\nMvqfNqRcwVpT9/Nt6gyJuBMUm153jv42wvOp6fklbAvUpWhr0zS/3AW2k/u1FRKP\n+b2OpGU4CmROHDwkNoqb5AFF0rIhmxjKM0oJ5A36BwKBgQDmRn3EFAJmgneS9B6a\n/7fpfLQHnVr8rSo1J33Tp2LL0rNn4fI6nA9liGFQck7H06MsN3o2hw0vIcC5kkV3\nfWFIvPy9lAKLfNiZ+NI6D1CG5DHYhUQ4D3DAf1hfNWlGwIlmzX17CI0562HqoSzE\nQb4ONOiOvODO/J4OmU7QbrdTWwKBgQDDWB0Kx4vSn9jwhUoEV8vXK2tedzJMx2e0\nQ2iFRXqj1dJfPvpufUghLZ3uda6vEXUtrNozlM/kliBiLOfBnIRY0DSMheNH4Ahc\n0q++17c+D9z79Ekw+aBHHedo115GOO5E725qxkKh6H+FZqQdg6tXzntBXb6P6rtA\nd5Cl+wLs0wKBgCf0NSAPRLdajbquppzIH7XgUDA+CiprNTaRypAtq8OnpD8zAd9P\ncpBwUEov+yFKxDYIziil2BDEb3cDPRBVbcq8F7Ig+ywOllpoxLkULSmqcEecH9EG\nRM7xiXjDgKepAm4W2128hxx0jcGzA1xt97bpUSxq8yqWxCnOSdF6VE6fAoGAT1t8\ncOSf6PEHMK71Ys5IASGifL3vsUFQ3+qCi6GuMOCslgT/t+Mtak0d28HzNSvibqvJ\n+Sp7SmGyxi939y+elHYA4xWBP7HDs/Hjc6QuzQekvrZ/BWZjtoBvgif8JIr8QQUD\n1ly0tRG+vHL2OQdElGdNq0BqKg0yBP6NxOA0UAECgYBt3/pWPByipGsZAeWao9ov\njUrdQsiW9bh1ufUPPYYr16B+U3LGum7O0fn1W3+9IuW6u0T6SIgIt5PYumDgtbYW\nC0Z/vHk5YyOM81hW/rF+nOYsZvlYLluHxmnPO0r3dn6Pgu1IPORheW+eVxPlxsbm\nb0bubmS6yKvgo13329OL2Q==\n-----END PRIVATE KEY-----\n",
+  "client_email": "salesgpt-backend@magiq-ai.iam.gserviceaccount.com",
+  "client_id": "109663085232382851147",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/salesgpt-backend%40magiq-ai.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
