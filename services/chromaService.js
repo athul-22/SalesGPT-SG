@@ -1,5 +1,6 @@
 const { ChromaClient } = require('chromadb');
 const openaiService = require('./openaiService');
+const path = require('path');
 
 class ChromaService {
   constructor() {
@@ -29,6 +30,16 @@ class ChromaService {
         fetchOptions: { useInMemory: true }
       });
     }
+  }
+
+  // Create a sanitized collection name from a file name
+  createCollectionName(originalName, documentId) {
+    // Remove file extension and sanitize name
+    const baseName = originalName.replace(/\.[^/.]+$/, "");
+    const sanitized = baseName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    // Truncate if needed and add prefix & document ID for uniqueness
+    const truncated = sanitized.substring(0, 25);
+    return `doc_${truncated}_${documentId.substring(0, 8)}`;
   }
 
   /**
@@ -160,6 +171,31 @@ class ChromaService {
       return { success: true, id, collectionName };
     } catch (error) {
       console.error(`Error adding document to collection "${collectionName}":`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add document with per-document collections
+   */
+  async addDocument(text, metadata, id) {
+    try {
+      // Create a collection name based on the document name
+      const collectionName = this.createCollectionName(
+        metadata.originalName || 'document', 
+        id
+      );
+      
+      // Create metadata with collection reference
+      const updatedMetadata = {
+        ...metadata,
+        collectionName
+      };
+      
+      // Add to collection
+      return await this.addDocumentToCollection(text, updatedMetadata, id, collectionName);
+    } catch (error) {
+      console.error('Error adding document:', error);
       throw error;
     }
   }

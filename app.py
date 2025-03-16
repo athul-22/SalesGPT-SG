@@ -339,27 +339,25 @@ elif selected_api == "Document Management":
     with tabs[0]:
         st.subheader("Upload Document")
         
+        # Show API connection status
+        server_url = BASE_URL
+        st.caption(f"📡 Connected to server: {server_url}")
+        server_status = api_call("system/status", timeout=2)
+        if server_status and server_status.status_code == 200:
+            st.success("✅ Server is online")
+        else:
+            st.error(f"❌ Server is offline or unreachable at {server_url}")
+            st.info("Check if your backend server is running and accessible")
+        
         uploaded_file = st.file_uploader("Choose a PDF or DOCX file", type=["pdf", "docx"], key="doc_upload")
-        user_id = st.text_input("User ID (optional)", "anonymous")
         
         if uploaded_file is not None:
             file_info = {
                 "Filename": uploaded_file.name,
                 "Size": f"{uploaded_file.size / 1024:.2f} KB",
-                "Type": uploaded_file.type,
-                "Content Type": uploaded_file.type
+                "Type": uploaded_file.type
             }
             st.write("File information:", file_info)
-            
-            # Debug mode to show binary data header
-            with st.expander("Debug File Info"):
-                if uploaded_file.type == "application/pdf":
-                    st.write("File appears to be PDF format")
-                elif uploaded_file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword"]:
-                    st.write("File appears to be Word document format")
-                else:
-                    st.warning(f"File MIME type {uploaded_file.type} may not be supported")
-                    st.info("Try renaming your file with the correct extension (.pdf or .docx)")
             
             if st.button("Upload Document"):
                 # Create progress container
@@ -387,37 +385,27 @@ elif selected_api == "Document Management":
                     status_text = st.empty()
                     
                     try:
-                        # Begin simulating progress for upload
+                        # Begin simulating progress for upload preparation
                         for i in range(25):
                             progress_bar.progress(i)
                             status_text.text(f"Preparing file for upload... {i}%")
                             time.sleep(0.05)
                         
                         # Update upload status
-                        upload_status.markdown("⏳ Uploading to GCP...")
+                        upload_status.markdown("⏳ Uploading document...")
                         
                         # Continue progress
                         for i in range(25, 50):
                             progress_bar.progress(i)
-                            status_text.text(f"Uploading file to GCP... {i}%")
+                            status_text.text(f"Uploading file... {i}%")
                             time.sleep(0.05)
                         
                         # Make API call with appropriate timeout
                         files = {"document": uploaded_file}
-                        data = {"userId": user_id}
-                    
-                        # First, check system status
-                        sys_status = api_call("system/status", method="GET", timeout=5)
-                        if not sys_status or sys_status.status_code != 200:
-                            st.error("Backend system appears to be unavailable. Please try again later.")
-                            upload_status.markdown("❌ Connection failed")
-                            vectorize_status.markdown("❌ Process canceled")
-                            index_status.markdown("❌ Process canceled")
-                            st.stop()
                         
                         # Continue with upload - longer timeout (180 seconds)
                         try:
-                            response = api_call("documents/upload", method="POST", data=data, files=files, timeout=180)
+                            response = api_call("documents/upload", method="POST", files=files, timeout=180)
                             
                             if response and response.status_code in [200, 202]:
                                 result = response.json()
@@ -425,23 +413,30 @@ elif selected_api == "Document Management":
                                 # Update progress for successful upload
                                 progress_bar.progress(50)
                                 status_text.text(f"File uploaded! Processing content... 50%")
-                                upload_status.markdown("✅ Uploaded successfully")
+                                upload_status.markdown("✅ Upload successful")
                                 
                                 # Show document ID early
-                                st.info(f"Document ID: `{result.get('documentId')}`")
+                                document_id = result.get('documentId')
+                                st.info(f"Document ID: `{document_id}`")
                                 
-                                # Continue with simulated processing (the actual processing happens in background)
-                                vectorize_status.markdown("⏳ Vectorizing content...")
-                                for i in range(50, 75):
+                                # Simulate vectorization progress
+                                vectorize_status.markdown("⏳ Extracting text...")
+                                for i in range(50, 65):
                                     progress_bar.progress(i)
-                                    status_text.text(f"Extracting text and generating embeddings... {i}%")
+                                    status_text.text(f"Extracting text from document... {i}%")
+                                    time.sleep(0.05)
+                                
+                                vectorize_status.markdown("⏳ Generating embeddings...")
+                                for i in range(65, 80):
+                                    progress_bar.progress(i)
+                                    status_text.text(f"Creating vector embeddings... {i}%")
                                     time.sleep(0.05)
                                 
                                 vectorize_status.markdown("✅ Vectorization complete")
                                 
                                 # Simulate indexing progress
                                 index_status.markdown("⏳ Indexing document...")
-                                for i in range(75, 100):
+                                for i in range(80, 100):
                                     progress_bar.progress(i)
                                     status_text.text(f"Indexing document for search... {i}%")
                                     time.sleep(0.05)
@@ -452,17 +447,26 @@ elif selected_api == "Document Management":
                                 index_status.markdown("✅ Indexing complete")
                                 
                                 # Success message
-                                st.success("Document uploaded and processing started!")
+                                st.success("Document uploaded and processed successfully!")
                                 
                                 # Display document info
                                 st.subheader("Document Information")
-                                st.write(f"Document ID: `{result.get('documentId')}`")
+                                st.write(f"Document ID: `{document_id}`")
+                                st.write(f"Collection: `{result.get('collectionName')}`")
                                 st.write(f"File name: {result.get('fileData', {}).get('originalName')}")
                                 st.write(f"File size: {result.get('fileData', {}).get('size')} bytes")
                                 
                                 # Copy button for document ID
-                                st.code(result.get('documentId', ''), language="text")
+                                st.code(document_id, language="text")
                                 st.info("👆 Copy this Document ID to use for queries and strategy generation")
+                                
+                                # Document details
+                                with st.expander("View full document details"):
+                                    st.json(result)
+                                    
+                                # Refresh button for document list
+                                if st.button("View All Documents"):
+                                    st.switch_page("Document Library")
                                 
                             else:
                                 # Handle upload failure
@@ -479,7 +483,7 @@ elif selected_api == "Document Management":
                                 # Add more detailed error info
                                 if not response:
                                     st.error(error_msg)
-                                    st.error(f"Server is not responding. Please check if the backend is running on {BASE_URL}")
+                                    st.error(f"Server is not responding. Please check if the backend is running on {server_url}")
                                 else:
                                     try:
                                         error_data = response.json()
@@ -489,10 +493,10 @@ elif selected_api == "Document Management":
                                     except:
                                         st.error(f"{error_msg}\nResponse: {response.text}")
                         except Exception as e:
-                            upload_status.markdown("❌ Process error")
+                            upload_status.markdown("❌ Upload error")
                             vectorize_status.markdown("❌ Process error")
                             index_status.markdown("❌ Process error")
-                            st.error(f"Error during upload process: {str(e)}")
+                            st.error(f"Error during upload: {str(e)}")
                     except Exception as e:
                         st.error(f"Error during upload process: {str(e)}")
     
