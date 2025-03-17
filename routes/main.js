@@ -5,6 +5,10 @@ const documentsRouter = require('./documents');
 const linkedinController = require('../controllers/linkedinProfiles');
 const path = require('path');
 const fs = require('fs').promises;
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
 
 router.post('/generateSalesStrategy', generateSalesStrategy);
 router.use('/documents', documentsRouter);
