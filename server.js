@@ -1,6 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const mainRouter = require('./routes/main');
+const cors = require('cors');  // Add this import
 
 // Load environment variables
 dotenv.config();
@@ -9,7 +10,14 @@ const app = express();
 const defaultPort = process.env.PORT || 3000;
 const alternativePorts = [3001, 3002, 3003, 4000];
 
-// Middleware
+// Apply CORS middleware before other middleware
+app.use(cors({
+  origin: '*',  // For development. In production, specify allowed domains
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Other middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
