@@ -82,7 +82,7 @@ class ChromaService {
   /**
    * Get or create a collection with the specified name
    */
-  async getOrCreateCollection(collectionName) {
+  async getOrCreateCollection(collectionName = 'default_collection') {
     try {
       const embeddingFunction = this.createEmbeddingFunction();
       
