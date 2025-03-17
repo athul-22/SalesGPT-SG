@@ -1,21 +1,22 @@
 const express = require('express');
 const router = express.Router();
-const upload = require('../middleware/upload');
+const multer = require('multer');
 const documentController = require('../controllers/documentController');
 
-// Route for uploading documents
+// Configure multer for memory storage
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
+// Document routes
 router.post('/upload', upload.single('document'), documentController.uploadDocument);
-
-// Route for getting document details
 router.get('/:documentId', documentController.getDocumentById);
-
-// Route for querying documents
+router.get('/list', documentController.listDocuments);
 router.post('/query', documentController.queryDocuments);
 
-// Route for generating sales strategy from document
-router.post('/generateSalesStrategy', documentController.generateSalesStrategy);
-
-// Route for listing all documents
-router.get('/list', documentController.listDocuments);
+// This route is likely causing the error - generateSalesStrategy is undefined
+// Comment it out if you don't need it yet or define the function
+// router.post('/generate-strategy', documentController.generateSalesStrategy);
 
 module.exports = router;
