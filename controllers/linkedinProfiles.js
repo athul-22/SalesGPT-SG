@@ -1,11 +1,11 @@
 const exaService = require('../services/exaService');
 
 /**
- * Search for LinkedIn profiles based on company, position, and location
+ * Search for LinkedIn profiles based on company, position, location and optional parameters
  */
 const searchLinkedInProfiles = async (req, res) => {
   try {
-    const { company, position, location, limit = 5 } = req.body;
+    const { company, position, location, limit = 5, expertise = '', team = '' } = req.body;
     
     // Validate required parameters
     if (!company || !position || !location) {
@@ -15,8 +15,15 @@ const searchLinkedInProfiles = async (req, res) => {
       });
     }
     
-    // Call the exa service to search for profiles
-    const profiles = await exaService.searchLinkedInProfiles(company, position, location, limit);
+    // Call the exa service to search for profiles with enhanced parameters
+    const profiles = await exaService.searchLinkedInProfiles(
+      company, 
+      position, 
+      location, 
+      limit,
+      expertise,
+      team
+    );
     
     // If no profiles found, return an appropriate message
     if (!profiles || profiles.length === 0) {
@@ -26,13 +33,15 @@ const searchLinkedInProfiles = async (req, res) => {
       });
     }
     
-    // Return the profiles
+    // Return the enhanced profiles
     return res.status(200).json({
       success: true,
       message: `Found ${profiles.length} LinkedIn profiles`,
       company,
       position,
       location,
+      expertise: expertise || undefined,
+      team: team || undefined,
       profiles
     });
   } catch (error) {
