@@ -1,4 +1,5 @@
 const https = require('https');
+const organizationService = require('../services/organizationService');
 const aiService = require('../services/aiService');
 
 // Helper function to make HTTP requests with improved error handling
@@ -85,17 +86,28 @@ const cleanJsonResponse = (text) => {
 // This function is executed when the sales strategy endpoint is hit
 const generateSalesStrategy = async (req, res) => {
     try {
-        // Get company name and location from request body
+        // Get parameters from request body
         const companyName = req.body?.companyName || 'Google';
-        const location = req.body?.location || '';  // Default to empty string if not provided
+        const targetGeography = req.body?.targetGeography || '';
+        const businessType = req.body?.businessType || '';
+        const industry = req.body?.industry || '';
+        const role = req.body?.role || '';
+        
+        console.log(`Searching for organization: ${companyName}`);
 
-        console.log(`Fetching company information for ${companyName} ${location ? 'in ' + location : ''}...`);
+        // Create search options from request parameters
+        const searchOptions = {
+            targetGeography,
+            businessType,
+            industry,
+            role
+        };
 
-        // Create a simple fallback response in case everything fails
+        // Create a fallback response in case everything fails
         const fallbackResponse = {
             companyName: companyName,
-            industry: "Technology",
-            businessType: "Product and Services",
+            industry: industry || "Technology",
+            businessType: businessType || "Services",
             companySize: {
                 annualRevenue: "Unknown",
                 employeeCount: "Unknown"
@@ -148,174 +160,102 @@ const generateSalesStrategy = async (req, res) => {
         };
 
         try {
-            // Step 1: Search for organization to get ID - now with location filtering
-            const searchOptions = {
-                method: 'GET',
-                hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
-                port: 443,
-                path: `/search_organization?q_organization_name=${encodeURIComponent(companyName)}&page=1${location ? '&organization_locations=' + encodeURIComponent(location) : ''}`,
-                headers: {
-                    'x-rapidapi-key': process.env.RAPID_API_KEY || 'e2941bfeeamshf10306bfb50c2b7p1895c3jsn364eb99e3308',
-                    'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
-                }
-            };
-
-            const searchResponse = await safeApiCall(searchOptions);
+            // Step 1: Search for organizations using the search API
+            const organizations = await organizationService.searchOrganizations(companyName, searchOptions);
             
-            if (!searchResponse.data || !searchResponse.data.organizations || searchResponse.data.organizations.length === 0) {
-                console.log(`No company information found for ${companyName}, using fallback`);
+            if (!Array.isArray(organizations) || organizations.length === 0 || organizations.error) {
+                console.log(`No organizations found for ${companyName}, using fallback`);
                 return res.status(200).json(fallbackResponse);
             }
 
-            let targetCompany;
-            const organizations = searchResponse.data.organizations;
-
-            // First try to find an exact match with high employee count
-            targetCompany = organizations.find(org => 
-              org.name.toLowerCase() === companyName.toLowerCase() && 
-              org.employees_count > 1000
-            );
-
-            // If not found, look for a close match with website containing the company name
-            if (!targetCompany) {
-              targetCompany = organizations.find(org => 
-                org.name.toLowerCase().includes(companyName.toLowerCase()) &&
-                org.website_url && 
-                org.website_url.toLowerCase().includes(companyName.toLowerCase())
-              );
-            }
-
-            // If still not found, just take the organization with highest employee count
-            if (!targetCompany) {
-              targetCompany = organizations.sort((a, b) => 
-                (b.employees_count || 0) - (a.employees_count || 0)
-              )[0];
-            }
-
-            // Fallback to the first result if nothing else worked
-            if (!targetCompany) {
-              targetCompany = organizations[0];
-            }
-
-            const organizationId = targetCompany.id;
+            // Log a sample of what the API is actually returning
+            console.log('First organization structure:', JSON.stringify(organizations[0], null, 2));
             
-            console.log(`Found company: ${targetCompany.name} (ID: ${organizationId})`);
+            // Replace the section where we process the organizations array:
 
-            // Step 2: Make parallel requests for details and news
+            // First, let's debug what we're actually getting from the API
+            console.log('API Response Type:', typeof organizations);
+            console.log('Is array?', Array.isArray(organizations));
+            console.log('Length:', organizations.length);
+            console.log('Full API Response:', JSON.stringify(organizations, null, 2));
+            
+            // Safely select the first organization
+            let targetCompany = null;
+            if (Array.isArray(organizations) && organizations.length > 0) {
+                // Try to find an exact match by name
+                targetCompany = organizations.find(org => 
+                    org.name && companyName && 
+                    org.name.toLowerCase() === companyName.toLowerCase()
+                );
+                
+                // If not found, look for a partial match
+                if (!targetCompany) {
+                    targetCompany = organizations.find(org => 
+                        org.name && companyName && 
+                        org.name.toLowerCase().includes(companyName.toLowerCase())
+                    );
+                }
+                
+                // If still not found, just take the first result
+                if (!targetCompany) {
+                    targetCompany = organizations[0];
+                }
+                
+                console.log('Selected organization:', JSON.stringify(targetCompany, null, 2));
+            } else {
+                console.error('No valid organizations found in the response');
+                return res.status(200).json(fallbackResponse);
+            }
+            
+            // Safely extract companyId
+            const companyId = targetCompany.id;
+            if (!companyId) {
+                console.error('No company ID found in the selected organization');
+                return res.status(200).json(fallbackResponse);
+            }
+            
+            console.log(`Found company: ${targetCompany.name || 'Unknown'} (ID: ${companyId})`);
+
+            // Step 2: Get detailed organization information and news
             let detailsResponse, newsResponse;
             
             try {
                 [detailsResponse, newsResponse] = await Promise.all([
-                    // Get organization details
-                    safeApiCall({
-                        method: 'GET',
-                        hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
-                        port: 443,
-                        path: `/organization_details?id=${organizationId}`,
-                        headers: {
-                            'x-rapidapi-key': process.env.RAPID_API_KEY || 'e2941bfeeamshf10306bfb50c2b7p1895c3jsn364eb99e3308',
-                            'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
-                        }
-                    }),
-                    // Get organization news - using id parameter
-                    safeApiCall({
-                        method: 'GET',
-                        hostname: 'apollo-io-no-cookies-required.p.rapidapi.com',
-                        port: 443,
-                        path: `/organization_news?id=${organizationId}&page=1`,  // Using id instead of organization_id
-                        headers: {
-                            'x-rapidapi-key': process.env.RAPID_API_KEY || 'e2941bfeeamshf10306bfb50c2b7p1895c3jsn364eb99e3308',
-                            'x-rapidapi-host': 'apollo-io-no-cookies-required.p.rapidapi.com'
-                        }
-                    })
+                    organizationService.getOrganizationDetails(companyId),
+                    organizationService.getOrganizationNews(companyId)
                 ]);
-            } catch (parallelError) {
-                console.error("Error fetching details and news:", parallelError);
-                // Continue with what we have from the search
-                detailsResponse = { data: { organization: {} } };
-                newsResponse = { data: { organization_news: [] } };
+            } catch (error) {
+                console.error("Error fetching organization details and news:", error);
+                detailsResponse = targetCompany;
+                newsResponse = [];
             }
 
-            // Step 3: Extract and merge data
-            const organizationDetails = detailsResponse?.data?.organization || {};
-            const organizationNews = newsResponse?.data?.organization_news || [];
+            // Check for errors in responses
+            const organizationDetails = detailsResponse.error ? targetCompany : detailsResponse;
+            const organizationNews = Array.isArray(newsResponse) ? newsResponse : [];
             
-            // Create comprehensive company profile for AI processing
+            // Step 3: Create comprehensive company profile
             const companyProfile = {
-                name: organizationDetails.name || targetCompany.name || companyName,
-                website: organizationDetails.website_url || targetCompany.website_url || "Unknown",
-                industry: organizationDetails.industry || targetCompany.industry || "Technology",
-                description: organizationDetails.short_description || targetCompany.short_description || "No description available",
-                headquarters: organizationDetails.raw_address || targetCompany.raw_address || "Unknown",
-                founded: organizationDetails.founded_year || targetCompany.founded_year || "Unknown",
-                phone: organizationDetails.phone || targetCompany.phone || "Unknown",
-                revenue: organizationDetails.organization_revenue_printed || targetCompany.organization_revenue_printed || "Unknown",
-                employeeCount: organizationDetails.employees_count || targetCompany.employees_count || "Unknown",
-                news: organizationNews.map(news => ({
-                    title: news.title || "Unknown",
-                    source: news.source || "Unknown",
-                    url: news.url || "#",
-                    date: news.published_date || "Unknown",
-                    summary: news.summary || "No summary available"
-                })).slice(0, 5)
+                name: organizationDetails.name || companyName,
+                industry: organizationDetails.industry || industry || "Technology",
+                description: organizationDetails.description || "No description available",
+                headquarters: organizationDetails.targetGeography || targetGeography || "Unknown",
+                businessType: organizationDetails.businessType || businessType || "Services",
+                role: organizationDetails.role || role || "Unknown",
+                news: organizationNews.slice(0, 5)
             };
-
-            // Determine business type based on description or default appropriately
-            const businessType = companyProfile.description.toLowerCase().includes('product') ? 
-                (companyProfile.description.toLowerCase().includes('service') ? "Product and Services" : "Product") : "Services";
-                
-            // Extract main products/services from description or news if available
-            let productServices = [];
             
-            // Try to extract products from description
-            const description = companyProfile.description;
-            if (description && description !== "No description available") {
-                // Look for product mentions in description
-                const productMatches = description.match(/(?:offers|provides|sells|develops)(?:[^.;]*)(?:such as|including|like|:) ([^.;]+)/i);
-                if (productMatches && productMatches[1]) {
-                    productServices = productMatches[1]
-                        .split(/,|\band\b/)
-                        .map(item => item.trim())
-                        .filter(item => item.length > 0);
-                }
-            }
-            
-            // If we couldn't extract from description, try news headlines
-            if (productServices.length === 0 && companyProfile.news && companyProfile.news.length > 0) {
-                const newsTitles = companyProfile.news.map(item => item.title).join(' ');
-                const productWords = newsTitles.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\b/g);
-                if (productWords) {
-                    productServices = [...new Set(productWords)]
-                        .filter(word => !word.includes(companyProfile.name))
-                        .slice(0, 3);
-                }
-            }
-            
-            // If still empty, create some defaults based on industry
-            if (productServices.length === 0) {
-                if (companyProfile.industry.toLowerCase().includes('tech') || companyProfile.industry.toLowerCase().includes('software')) {
-                    productServices = ["Enterprise Software", "Cloud Solutions", "Digital Transformation Services"];
-                } else if (companyProfile.industry.toLowerCase().includes('finance') || companyProfile.industry.toLowerCase().includes('bank')) {
-                    productServices = ["Financial Services", "Investment Solutions", "Banking Products"];
-                } else {
-                    productServices = [`${companyProfile.industry} Solutions`, `${companyProfile.industry} Services`, "Professional Consulting"];
-                }
-            }
-            
-            // Limit to max 5 products/services
-            productServices = productServices.slice(0, 5);
-
-            // Pre-build the base of our JSON response
+            // Create response template
             const responseTemplate = {
                 companyName: companyProfile.name,
                 industry: companyProfile.industry,
-                businessType: businessType,
-                headquarters: companyProfile.headquarters,  // Add this line to include location
+                businessType: companyProfile.businessType,
+                headquarters: companyProfile.headquarters,
                 companySize: {
-                    annualRevenue: companyProfile.revenue,
-                    employeeCount: companyProfile.employeeCount
+                    annualRevenue: organizationDetails.annualRevenue || "Unknown",
+                    employeeCount: organizationDetails.employeeCount || "Unknown"
                 },
-                productOrServiceDetails: productServices,
+                productOrServiceDetails: organizationDetails.products || ["Product/Service details not available"],
                 salesStrategy: {
                     currentSituation: {
                         opportunitiesAndPriorities: "Digital transformation and innovation",
@@ -358,10 +298,7 @@ const generateSalesStrategy = async (req, res) => {
                 }
             };
 
-            // If we don't need AI generation, just return the template
-            // return res.status(200).json(responseTemplate);
-
-            // Step 4: Use AI to generate sales strategy in the required format
+            // Step 4: Use AI to generate sales strategy
             const prompt = `
             Generate a comprehensive sales strategy for ${companyProfile.name}.
             
@@ -377,72 +314,45 @@ const generateSalesStrategy = async (req, res) => {
             DO NOT wrap the response in markdown code blocks.
             DO NOT add any text outside the JSON structure.
             Return ONLY a valid JSON object.
+            
+            Include a "ccsScore" (Customer Compatibility Score) between 0-100 that reflects how well this company would 
+            align with our services.
             `;
 
             let response = responseTemplate;
             
             try {
                 console.log("Sending prompt to AI service...");
-                // Use AI service to generate strategy
                 const generatedStrategy = await aiService.generateContent(prompt);
                 console.log("Received response from AI service");
                 
                 try {
-                    // Clean any markdown formatting from the response
                     const cleanedStrategy = cleanJsonResponse(generatedStrategy);
-                    console.log("Cleaned response, attempting to parse as JSON");
-                    
-                    // Parse the cleaned response
                     const parsedStrategy = JSON.parse(cleanedStrategy);
                     console.log("Successfully parsed AI response as JSON");
-                    
-                    // Merge the AI-generated content with our template
                     response = parsedStrategy;
                 } catch (parseError) {
-                    console.error("Failed to parse AI response as JSON:", parseError);
-                    console.log("AI Response snippet:", generatedStrategy.substring(0, 200) + "...");
-                    
-                    // Keep using the template but with the basic data we already have
-                    console.log("Using fallback response template");
+                    console.error("Failed to parse AI response:", parseError);
                 }
             } catch (aiError) {
                 console.error("Error generating AI strategy:", aiError);
-                // Continue with the template we already created
             }
 
-            // Step 5: Return response in the exact required format
+            // Step 5: Return the final response
             console.log("Sending final response to client");
             return res.status(200).json(response);
             
         } catch (apiError) {
             console.error("API error:", apiError);
-            // Return fallback response if API calls fail
             return res.status(200).json(fallbackResponse);
         }
         
     } catch (error) {
         console.error('Error generating sales strategy:', error);
-        // Return a minimal response with error info
         return res.status(500).json({ 
             success: false, 
             message: 'Error generating sales strategy', 
-            error: error.message,
-            companyName: req.body?.companyName || 'Unknown',
-            industry: "Unknown",
-            businessType: "Unknown",
-            companySize: {
-                annualRevenue: "Unknown",
-                employeeCount: "Unknown"
-            },
-            productOrServiceDetails: ["Unknown"],
-            salesStrategy: {
-                currentSituation: {
-                    opportunitiesAndPriorities: "Unknown due to error",
-                    existingTechnologySolutions: ["Unknown"],
-                    painPointsAndMarketPressures: ["Unknown"]
-                },
-                ccsScore: 0
-            }
+            error: error.message 
         });
     }
 };
