@@ -1,14 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const { generateSalesStrategy } = require('../controllers/salesStrategy');
+const { salesCoPilot, clearConversationHistory } = require('../controllers/salesCoPilotController');
 const documentsRouter = require('./documents');
 const linkedinController = require('../controllers/linkedinProfiles');
 const path = require('path');
 const fs = require('fs').promises;
 
 router.post('/generateSalesStrategy', generateSalesStrategy);
+router.post('/salesCoPilot', salesCoPilot);
 router.use('/documents', documentsRouter);
 router.post('/linkedinProfiles/search', linkedinController.searchLinkedInProfiles);
+router.post('/salesCoPilot/clearHistory', clearConversationHistory);
 
 router.get('/system/status', async (req, res) => {
   try {

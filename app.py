@@ -118,12 +118,17 @@ if selected_api == "Generate Sales Strategy":
     st.title("Generate Sales Strategy")
     st.write("Generate a comprehensive sales strategy for a target company")
     
-    # Input fields
+    # Input fields - expanded to match API parameters
     col1, col2 = st.columns(2)
     with col1:
         company_name = st.text_input("Company Name", "Google")
+        industry = st.text_input("Industry (optional)", "")
     with col2:
         location = st.text_input("Location (optional)", "United States")
+        business_type = st.text_input("Business Type (optional)", "")
+    
+    # Add role in a separate row
+    role = st.text_input("Target Role (optional)", "")
     
     # Advanced options
     with st.expander("Advanced Options"):
@@ -133,10 +138,17 @@ if selected_api == "Generate Sales Strategy":
     if st.button("Generate Sales Strategy"):
         with st.spinner("Generating sales strategy... This may take up to 60 seconds."):
             try:
+                # Create payload with all parameters
                 payload = {
                     "companyName": company_name,
-                    "location": location if location else None  # Only send if not empty
+                    "targetGeography": location if location else None,
+                    "businessType": business_type if business_type else None,
+                    "industry": industry if industry else None,
+                    "role": role if role else None
                 }
+                
+                # Remove None values
+                payload = {k: v for k, v in payload.items() if v is not None}
                 
                 # Add more detailed timeout and error handling
                 response = api_call("generateSalesStrategy", method="POST", data=payload, timeout=120)
@@ -147,174 +159,166 @@ if selected_api == "Generate Sales Strategy":
                 elif response.status_code == 200:
                     try:
                         result = response.json()
-                        # Display the results as before
-                        st.success("Sales strategy generated successfully!")
                         
-                        # Company overview section
-                        st.header(f"{result.get('companyName', 'Company')} Sales Strategy")
-                        
-                        # Company metrics in a nice row
-                        col1, col2, col3, col4 = st.columns(4)  # Changed from 3 to 4 columns
-
-                        with col1:
-                            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                            st.markdown(f'<div class="metric-value">{result.get("industry", "N/A")}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="metric-label">Industry</div>', unsafe_allow_html=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-
-                        with col2:
-                            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                            st.markdown(f'<div class="metric-value">{result.get("businessType", "N/A")}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="metric-label">Business Type</div>', unsafe_allow_html=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-
-                        with col3:
-                            company_size = result.get('companySize', {})
-                            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                            st.markdown(f'<div class="metric-value">{company_size.get("employeeCount", "N/A")}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="metric-label">Employees</div>', unsafe_allow_html=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-
-                        with col4:
-                            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                            headquarters = result.get('headquarters', 'N/A')  # This looks correct
-                            st.markdown(f'<div class="metric-value">{headquarters}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="metric-label">Location</div>', unsafe_allow_html=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-                        
-                        # Product/Service Details section
-                        st.subheader("Products & Services")
-                        product_services = result.get('productOrServiceDetails', [])
-                        if product_services:
-                            for item in product_services:
-                                st.markdown(f"• {item}")
+                        if result is None:
+                            st.error("Received empty response from server")
                         else:
-                            st.write("No product/service information available")
-                        
-                        # Sales Strategy sections
-                        sales_strategy = result.get('salesStrategy', {})
-                        if sales_strategy:
-                            # Current Situation
-                            st.subheader("Current Situation")
-                            current_situation = sales_strategy.get('currentSituation', {})
+                            # Display errors if present
+                            if 'errors' in result and result.get('errors') is not None:
+                                error_details = result.get('errors', {})
+                                
+                                if error_details.get('companyError'):
+                                    st.error(f"⚠️ {error_details.get('companyError')}")
+                                
+                                if error_details.get('aiError'):
+                                    st.error(f"⚠️ AI Service Error: {error_details.get('aiError')}")
+                                
+                                if error_details.get('usingFallback'):
+                                    st.warning("Using limited data for sales strategy generation.")
                             
-                            st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
-                            st.markdown("#### Opportunities & Priorities")
-                            st.write(current_situation.get('opportunitiesAndPriorities', 'Not available'))
+                            # Display the results as before
+                            st.success("Sales strategy generated successfully!")
                             
-                            st.markdown("#### Existing Technology Solutions")
-                            tech_solutions = current_situation.get('existingTechnologySolutions', [])
-                            for tech in tech_solutions:
-                                st.markdown(f"• {tech}")
+                            # Company overview section
+                            st.header(f"{result.get('companyName', 'Company')} Sales Strategy")
                             
-                            st.markdown("#### Pain Points & Market Pressures")
-                            pain_points = current_situation.get('painPointsAndMarketPressures', [])
-                            for point in pain_points:
-                                st.markdown(f"• {point}")
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Value Proposition
-                            st.subheader("Value Proposition")
-                            value_prop = sales_strategy.get('valueProposition', {})
-                            
-                            st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
-                            st.markdown("#### Key Message")
-                            st.write(value_prop.get('keyMessage', 'Not available'))
-                            
-                            st.markdown("#### Benefits")
-                            benefits = value_prop.get('benefits', [])
-                            for benefit in benefits:
-                                st.markdown(f"• {benefit}")
-                            
-                            st.markdown("#### Differentiation")
-                            st.write(value_prop.get('differentiation', 'Not available'))
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Obstacles & Mitigation
-                            st.subheader("Potential Obstacles & Mitigation")
-                            obstacles = sales_strategy.get('potentialObstaclesMitigation', {})
+                            # Company metrics in a nice row
+                            col1, col2, col3, col4 = st.columns(4)
 
-                            if obstacles:
-                                st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
-                                # Check if we have numbered obstacles or direct key-value pairs
-                                for key, value in obstacles.items():
-                                    if isinstance(value, dict) and 'description' in value:
-                                        # Handle the obstacle1, obstacle2, obstacle3 format
-                                        st.markdown(f"**{value['description']}**")
-                                        st.write(f"*Mitigation:* {value.get('mitigation', 'Not available')}")
-                                        st.markdown("---")
-                                    elif key == 'description' and 'mitigation' in obstacles:
-                                        # Handle the direct format with description and mitigation as keys
-                                        st.markdown(f"**{obstacles['description']}**")
-                                        st.write(f"*Mitigation:* {obstacles.get('mitigation', 'Not available')}")
-                                        st.markdown("---")
-                                        break  # Only process once if this is the format
+                            with col1:
+                                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                                st.markdown(f'<div class="metric-value">{result.get("industry", "N/A")}</div>', unsafe_allow_html=True)
+                                st.markdown('<div class="metric-label">Industry</div>', unsafe_allow_html=True)
                                 st.markdown('</div>', unsafe_allow_html=True)
+
+                            with col2:
+                                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                                st.markdown(f'<div class="metric-value">{result.get("businessType", "N/A")}</div>', unsafe_allow_html=True)
+                                st.markdown('<div class="metric-label">Business Type</div>', unsafe_allow_html=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+
+                            with col3:
+                                company_size = result.get('companySize', {})
+                                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                                st.markdown(f'<div class="metric-value">{company_size.get("employeeCount", "N/A")}</div>', unsafe_allow_html=True)
+                                st.markdown('<div class="metric-label">Employees</div>', unsafe_allow_html=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+
+                            with col4:
+                                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                                headquarters = result.get('headquarters', 'N/A')
+                                st.markdown(f'<div class="metric-value">{headquarters}</div>', unsafe_allow_html=True)
+                                st.markdown('<div class="metric-label">Location</div>', unsafe_allow_html=True)
+                                st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # Product/Service Details section
+                            st.subheader("Products & Services")
+                            product_services = result.get('productOrServiceDetails', [])
+                            if product_services:
+                                for item in product_services:
+                                    st.markdown(f"• {item}")
                             else:
-                                st.info("No obstacles information available")
+                                st.write("No product/service information available")
                             
-                            # Engagement Strategy
-                            st.subheader("Engagement Strategy")
-                            engagement = sales_strategy.get('engagementStrategy', [])
-                            
-                            st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
-                            for item in engagement:
-                                st.markdown(f"• {item}")
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Competitor Analysis
-                            st.subheader("Competitor Analysis")
-                            competitors = sales_strategy.get('competitorAnalysis', [])
-                            
-                            if competitors:
-                                cols = st.columns(2)
-                                for i, competitor in enumerate(competitors):
-                                    with cols[i % 2]:  # This ensures it works with any number of competitors
-                                        st.markdown('<div class="competitor-card">', unsafe_allow_html=True)
-                                        st.markdown(f"### {competitor.get('competitor', 'Competitor')}")
-                                        
-                                        st.markdown("**Strengths:**")
-                                        strengths = competitor.get('strengths', [])
-                                        for strength in strengths:
-                                            st.markdown(f"• {strength}")
-                                        
-                                        st.markdown("**Weaknesses:**")
-                                        weaknesses = competitor.get('weaknesses', [])
-                                        for weakness in weaknesses:
-                                            st.markdown(f"• {weakness}")
-                                        st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # CCS Score
-                            st.subheader("Customer Compatibility Score (CCS)")
-                            ccs_score = sales_strategy.get('ccsScore', 0)
-                            
-                            # Create a gauge-like visualization
-                            score_color = "#4CAF50" if ccs_score >= 85 else "#FFC107" if ccs_score >= 75 else "#F44336"
-                            
-                            # Create a progress bar for the CCS score
-                            st.progress(ccs_score/100)
-                            st.markdown(f'<p style="text-align:center; font-size:24px; font-weight:bold; color:{score_color}">{ccs_score}/100</p>', unsafe_allow_html=True)
-                            
-                            if ccs_score >= 85:
-                                st.success("Excellent compatibility with this prospect")
-                            elif ccs_score >= 75:
-                                st.warning("Good compatibility with this prospect")
-                            else:
-                                st.error("Average compatibility - may require additional effort")
+                            # Sales Strategy sections
+                            sales_strategy = result.get('salesStrategy', {})
+                            if sales_strategy:
+                                # Current Situation
+                                st.subheader("Current Situation")
+                                current_situation = sales_strategy.get('currentSituation', {})
+                                
+                                st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
+                                st.markdown("#### Opportunities & Priorities")
+                                st.write(current_situation.get('opportunitiesAndPriorities', 'Not available'))
+                                
+                                st.markdown("#### Existing Technology Solutions")
+                                tech_solutions = current_situation.get('existingTechnologySolutions', [])
+                                for tech in tech_solutions:
+                                    st.markdown(f"• {tech}")
+                                
+                                st.markdown("#### Pain Points & Market Pressures")
+                                pain_points = current_situation.get('painPointsAndMarketPressures', [])
+                                for point in pain_points:
+                                    st.markdown(f"• {point}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Value Proposition
+                                st.subheader("Value Proposition")
+                                value_prop = sales_strategy.get('valueProposition', {})
+                                
+                                st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
+                                st.markdown("#### Key Message")
+                                st.write(value_prop.get('keyMessage', 'Not available'))
+                                
+                                st.markdown("#### Benefits")
+                                benefits = value_prop.get('benefits', [])
+                                for benefit in benefits:
+                                    st.markdown(f"• {benefit}")
+                                
+                                st.markdown("#### Differentiation")
+                                st.write(value_prop.get('differentiation', 'Not available'))
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Obstacles & Mitigation
+                                st.subheader("Potential Obstacles & Mitigation")
+                                obstacles = sales_strategy.get('potentialObstaclesMitigation', {})
+
+                                if obstacles:
+                                    st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
+                                    # Check if we have numbered obstacles or direct key-value pairs
+                                    for key, value in obstacles.items():
+                                        if isinstance(value, dict) and 'description' in value:
+                                            # Handle the obstacle1, obstacle2, obstacle3 format
+                                            st.markdown(f"**{value['description']}**")
+                                            st.write(f"*Mitigation:* {value.get('mitigation', 'Not available')}")
+                                            st.markdown("---")
+                                        elif key == 'description' and 'mitigation' in obstacles:
+                                            # Handle the direct format with description and mitigation as keys
+                                            st.markdown(f"**{obstacles['description']}**")
+                                            st.write(f"*Mitigation:* {obstacles.get('mitigation', 'Not available')}")
+                                            st.markdown("---")
+                                            break  # Only process once if this is the format
+                                    st.markdown('</div>', unsafe_allow_html=True)
+                                else:
+                                    st.info("No obstacles information available")
+                                
+                                # Engagement Strategy
+                                st.subheader("Engagement Strategy")
+                                engagement = sales_strategy.get('engagementStrategy', [])
+                                
+                                st.markdown('<div class="strategy-section">', unsafe_allow_html=True)
+                                for item in engagement:
+                                    st.markdown(f"• {item}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Competitor Analysis
+                                st.subheader("Competitor Analysis")
+                                competitors = sales_strategy.get('competitorAnalysis', [])
+                                
+                                if competitors:
+                                    cols = st.columns(2)
+                                    for i, competitor in enumerate(competitors):
+                                        with cols[i % 2]:  # This ensures it works with any number of competitors
+                                            st.markdown('<div class="competitor-card">', unsafe_allow_html=True)
+                                            st.markdown(f"### {competitor.get('competitor', 'Competitor')}")
+                                            
+                                            st.markdown("**Strengths:**")
+                                            strengths = competitor.get('strengths', [])
+                                            for strength in strengths:
+                                                st.markdown(f"• {strength}")
+                                            
+                                            st.markdown("**Weaknesses:**")
+                                            weaknesses = competitor.get('weaknesses', [])
+                                            for weakness in weaknesses:
+                                                st.markdown(f"• {weakness}")
+                                            st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Remove CCS Score section as requested
+                                
+                            # Raw JSON option
+                            with st.expander("View raw JSON data"):
+                                st.json(result)
                         
-                        # Raw JSON option
-                        with st.expander("View raw JSON data"):
-                            st.json(result)
-                        
-                        # Add this after your CCS Score section
-                        with st.expander("Debug Info"):
-                            st.subheader("Response Structure")
-                            st.json({
-                                "top_level_keys": list(result.keys()),
-                                "salesStrategy_keys": list(sales_strategy.keys() if sales_strategy else []),
-                                "obstacles_count": len(obstacles) if obstacles else 0,
-                                "competitors_count": len(competitors) if competitors else 0
-                            })
                     except ValueError:
                         st.error("Received an invalid response from the server.")
                         st.code(response.text)
@@ -657,6 +661,14 @@ elif selected_api == "Document Management":
                 
                 if response and response.status_code == 200:
                     result = response.json()
+                    
+                    if 'errors' in result and (result.get('errors', {}).get('companyError') or 
+                                               result.get('errors', {}).get('documentError')):
+                        if result.get('errors', {}).get('companyError'):
+                            st.error(f"⚠️ Company data error: {result['errors']['companyError']}")
+                        if result.get('errors', {}).get('documentError'):
+                            st.warning(f"⚠️ Document search error: {result['errors']['documentError']}")
+                    
                     st.success("Document-based sales strategy generated successfully!")
                     
                     # Display company info

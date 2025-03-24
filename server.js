@@ -52,7 +52,7 @@ require('dotenv').config();
 
 async function testChromaConnection() {
   try {
-    console.log('Testing ChromaDB cloud connection...');
+    //console.log('Testing ChromaDB cloud connection...');
     
     const client = new ChromaClient({
       path: "https://api.trychroma.com:8000",
@@ -89,7 +89,7 @@ testChromaConnection();
 // Test storage system on startup but don't block server
 async function testStorage() {
   try {
-    console.log('Testing document storage system...');
+    //console.log('Testing document storage system...');
     
     // Skip the document creation test that's causing errors
     // Instead, just check if ChromaDB client is initialized
@@ -99,7 +99,7 @@ async function testStorage() {
       console.warn('⚠️ ChromaDB client not initialized');
     }
     
-    console.log('Document storage system check complete - collections will be accessed only when needed');
+    //console.log('Document storage system check complete - collections will be accessed only when needed');
   } catch (error) {
     console.warn('⚠️ Document storage system has issues:', error.message);
     console.log('The application will continue running with degraded functionality');
