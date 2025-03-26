@@ -16,11 +16,11 @@ class ExaService {
    * @param {String} team - Team name (optional)
    * @returns {Promise<Array>} - Enhanced LinkedIn profile data
    */
+
   async searchLinkedInProfiles(company, position, location, limit = 5, expertise = '', team = '') {
     try {
       console.log(`Searching for ${position} at ${company} in ${location}...`);
       
-      // Select the appropriate prompt based on the parameters provided
       const prompt = this.selectPrompt(company, position, location, limit, expertise, team);
       
       const response = await axios({
@@ -33,29 +33,23 @@ class ExaService {
         data: {
           query: prompt,
           numResults: limit,
-          mode: "comprehensive", // Changed from "concise" to get more detailed data
+          mode: "comprehensive",
           type: "keyword",
           includeDomains: ["linkedin.com"]
         }
       });
 
-      // Process the results to extract profile information
       const results = response.data.results || [];
       const profiles = results.map(result => {
-        // Extract name from the title (typically "Name - Position at Company | LinkedIn")
         const titleParts = result.title ? result.title.split(' - ') : [''];
         const name = titleParts[0].trim();
         
-        // Extract other information from snippet
         const snippet = result.snippet || '';
         
-        // Try to extract designation, location from snippet
-        let designation = position; // Default to the searched position
-        let extractedLocation = location; // Default to the searched location
+        let designation = position; 
+        let extractedLocation = location; 
         
-        // Try to extract more accurate designation and location from snippet if available
         if (snippet) {
-          // Look for common patterns in LinkedIn snippets
           const designationMatch = snippet.match(/(?:is|as|works as|at)(.*?)(?:at|in|,|\.)/i);
           if (designationMatch && designationMatch[1]) {
             designation = designationMatch[1].trim();
@@ -89,10 +83,8 @@ class ExaService {
    * @param {Object} params - Search parameters
    * @returns {String} - The selected prompt
    */
-  selectPrompt(company, position, location, limit, expertise = '', team = '') {
-    // Determine which prompt to use based on the parameters provided
-    // Using all parameters = prompt 3, with expertise = prompt 2, basic = prompt 1
-    
+
+  selectPrompt(company, position, location, limit, expertise = '', team = '') {  
     if (expertise && team) {
       // Prompt 3 - most comprehensive
       return `Provide ${limit} LinkedIn profiles of employees working at ${company} as ${position} (multiple designations possible), specializing in ${expertise}, part of the ${team} team, and working at the ${location} office.`;

@@ -134,6 +134,13 @@ if selected_api == "Generate Sales Strategy":
     with st.expander("Advanced Options"):
         timeout = st.slider("Request Timeout (seconds)", 30, 300, 120)
     
+    # Add an option to select the data source
+    data_source = st.radio(
+        "Select Data Source",
+        ["Standard API", "Exa.ai (Web Search)"],
+        horizontal=True
+    )
+
     # Button to generate strategy
     if st.button("Generate Sales Strategy"):
         with st.spinner("Generating sales strategy... This may take up to 60 seconds."):
@@ -150,8 +157,11 @@ if selected_api == "Generate Sales Strategy":
                 # Remove None values
                 payload = {k: v for k, v in payload.items() if v is not None}
                 
+                # Select the appropriate endpoint based on user choice
+                endpoint = "generateExaSalesStrategy" if data_source == "Exa.ai (Web Search)" else "generateSalesStrategy"
+                
                 # Add more detailed timeout and error handling
-                response = api_call("generateSalesStrategy", method="POST", data=payload, timeout=120)
+                response = api_call(endpoint, method="POST", data=payload, timeout=timeout)
                 
                 if response is None:
                     st.error("Server is not responding. Please check if the backend is running.")

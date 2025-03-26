@@ -1,18 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const { generateSalesStrategy } = require('../controllers/salesStrategy');
+const { generateExaSalesStrategy } = require('../controllers/exaSalesStrategy');
 const { salesCoPilot, clearConversationHistory } = require('../controllers/salesCoPilotController');
 const documentsRouter = require('./documents');
 const linkedinController = require('../controllers/linkedinProfiles');
 const path = require('path');
 const fs = require('fs').promises;
 
+// Original Sales Strategy endpoint
 router.post('/generateSalesStrategy', generateSalesStrategy);
+
+// New Exa.ai-powered Sales Strategy endpoint
+router.post('/generateExaSalesStrategy', generateExaSalesStrategy);
+
+// Sales Co-Pilot endpoints
 router.post('/salesCoPilot', salesCoPilot);
-router.use('/documents', documentsRouter);
-router.post('/linkedinProfiles/search', linkedinController.searchLinkedInProfiles);
 router.post('/salesCoPilot/clearHistory', clearConversationHistory);
 
+// Other routes
+router.use('/documents', documentsRouter);
+router.post('/linkedinProfiles/search', linkedinController.searchLinkedInProfiles);
+
+// System status route
 router.get('/system/status', async (req, res) => {
   try {
     // Test different components
