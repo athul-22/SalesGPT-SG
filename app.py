@@ -354,229 +354,203 @@ elif selected_api == "Document Management":
     st.title("Document Management")
     
     # Create tabs for different document operations
-    tabs = st.tabs(["Upload Document", "Document Library", "Query Documents", "Generate Strategy"])
+    tabs = st.tabs(["Upload Document", "Document Library", "Google Drive Integration", "Query Documents", "Generate Strategy"])
     
-    # Tab 1: Upload Document
+    # Tab 1: Upload Document 
     with tabs[0]:
         st.subheader("Upload Document")
         
-        # Show API connection status
-        server_url = BASE_URL
-        st.caption(f"📡 Connected to server: {server_url}")
-        server_status = api_call("system/status", timeout=2)
-        if server_status and server_status.status_code == 200:
-            st.success("✅ Server is online")
+        # Simple server status check
+        if api_call("system/status", timeout=2):
+            st.success("Server is online")
         else:
-            st.error(f"❌ Server is offline or unreachable at {server_url}")
-            st.info("Check if your backend server is running and accessible")
+            st.error("Server is offline")
         
-        uploaded_file = st.file_uploader("Choose a PDF or DOCX file", type=["pdf", "docx"], key="doc_upload")
+        # Document uploader
+        uploaded_file = st.file_uploader("Choose a PDF or DOCX file", type=["pdf", "docx"])
+        
+        # Add processing options to help with rate limiting
+        with st.expander("Advanced Options"):
+            processing_mode = st.radio(
+                "Processing mode",
+                ["Standard", "Optimized for large documents"],
+                help="Optimized mode uses smaller chunks and slower processing to avoid rate limits"
+            )
+            
+            chunk_size = st.slider(
+                "Chunk size", 
+                min_value=100, 
+                max_value=1000, 
+                value=250,
+                help="Smaller chunks help avoid rate limits but process slower"
+            )
         
         if uploaded_file is not None:
-            file_info = {
-                "Filename": uploaded_file.name,
-                "Size": f"{uploaded_file.size / 1024:.2f} KB",
-                "Type": uploaded_file.type
-            }
-            st.write("File information:", file_info)
+            st.write(f"File: {uploaded_file.name} ({uploaded_file.size/1024:.1f} KB)")
+            
+            # Display recommendations for large files
+            if uploaded_file.size > 1024 * 1024:  # If file is larger than 1MB
+                st.warning("""
+                ⚠️ Large file detected. To avoid rate limit errors:
+                - Use the "Optimized for large documents" processing mode
+                - Reduce chunk size in advanced options
+                - Wait for processing to complete before uploading more files
+                """)
             
             if st.button("Upload Document"):
-                # Create progress container
-                progress_container = st.container()
-                
-                with progress_container:
-                    # Create columns for status indicators
-                    col1, col2, col3 = st.columns(3)
-                    
-                    # Initialize progress indicators
-                    with col1:
-                        upload_status = st.empty()
-                    with col2:
-                        vectorize_status = st.empty()
-                    with col3:
-                        index_status = st.empty()
-                    
-                    # Set initial status
-                    upload_status.markdown("⏳ Initializing upload...")
-                    vectorize_status.markdown("⏳ Vectorization pending...")
-                    index_status.markdown("⏳ Indexing pending...")
-                    
-                    # Add progress bar
+                with st.spinner("Uploading and processing document..."):
+                    # Progress bar
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    try:
-                        # Begin simulating progress for upload preparation
-                        for i in range(25):
+                    # Simulate initial progress
+                    for i in range(40):
+                        progress_bar.progress(i)
+                        status_text.text(f"Uploading file... {i}%")
+                        time.sleep(0.02)
+                    
+                    # Prepare payload with advanced options
+                    files = {"document": uploaded_file}
+                    data = {}
+                    
+                    if processing_mode == "Optimized for large documents":
+                        data["optimized"] = "true"
+                        data["chunkSize"] = str(chunk_size)
+                    
+                    # Actual upload
+                    response = api_call("documents/upload", method="POST", files=files, data=data, timeout=120)
+                    
+                    # Update progress based on response
+                    if response and response.status_code in [200, 202]:
+                        result = response.json()
+                        document_id = result.get('documentId')
+                        
+                        # Continue progress animation
+                        for i in range(40, 90):
                             progress_bar.progress(i)
-                            status_text.text(f"Preparing file for upload... {i}%")
-                            time.sleep(0.05)
+                            status_text.text(f"Processing document... {i}%")
+                            time.sleep(0.02)
                         
-                        # Update upload status
-                        upload_status.markdown("⏳ Uploading document...")
+                        # Show success message but inform about background processing
+                        progress_bar.progress(90)
+                        status_text.text("Document queued successfully!")
                         
-                        # Continue progress
-                        for i in range(25, 50):
-                            progress_bar.progress(i)
-                            status_text.text(f"Uploading file... {i}%")
-                            time.sleep(0.05)
+                        st.success("Document uploaded and queued for processing")
+                        st.info(f"Document ID: {document_id}")
                         
-                        # Make API call with appropriate timeout
-                        files = {"document": uploaded_file}
-                        
-                        # Continue with upload - longer timeout (180 seconds)
-                        try:
-                            response = api_call("documents/upload", method="POST", files=files, timeout=180)
+                        # Add a polling mechanism to check processing status
+                        if st.checkbox("Check processing status"):
+                            status_container = st.empty()
                             
-                            if response and response.status_code in [200, 202]:
-                                result = response.json()
+                            for _ in range(5):  # Poll a few times
+                                status_resp = api_call(f"documents/{document_id}/status", method="GET")
                                 
-                                # Update progress for successful upload
-                                progress_bar.progress(50)
-                                status_text.text(f"File uploaded! Processing content... 50%")
-                                upload_status.markdown("✅ Upload successful")
-                                
-                                # Show document ID early
-                                document_id = result.get('documentId')
-                                st.info(f"Document ID: `{document_id}`")
-                                
-                                # Simulate vectorization progress
-                                vectorize_status.markdown("⏳ Extracting text...")
-                                for i in range(50, 65):
-                                    progress_bar.progress(i)
-                                    status_text.text(f"Extracting text from document... {i}%")
-                                    time.sleep(0.05)
-                                
-                                vectorize_status.markdown("⏳ Generating embeddings...")
-                                for i in range(65, 80):
-                                    progress_bar.progress(i)
-                                    status_text.text(f"Creating vector embeddings... {i}%")
-                                    time.sleep(0.05)
-                                
-                                vectorize_status.markdown("✅ Vectorization complete")
-                                
-                                # Simulate indexing progress
-                                index_status.markdown("⏳ Indexing document...")
-                                for i in range(80, 100):
-                                    progress_bar.progress(i)
-                                    status_text.text(f"Indexing document for search... {i}%")
-                                    time.sleep(0.05)
-                                
-                                # Final status updates
-                                progress_bar.progress(100)
-                                status_text.text("Document processing complete! 100%")
-                                index_status.markdown("✅ Indexing complete")
-                                
-                                # Success message
-                                st.success("Document uploaded and processed successfully!")
-                                
-                                # Display document info
-                                st.subheader("Document Information")
-                                st.write(f"Document ID: `{document_id}`")
-                                st.write(f"Collection: `{result.get('collectionName')}`")
-                                st.write(f"File name: {result.get('fileData', {}).get('originalName')}")
-                                st.write(f"File size: {result.get('fileData', {}).get('size')} bytes")
-                                
-                                # Copy button for document ID
-                                st.code(document_id, language="text")
-                                st.info("👆 Copy this Document ID to use for queries and strategy generation")
-                                
-                                # Document details
-                                with st.expander("View full document details"):
-                                    st.json(result)
+                                if status_resp and status_resp.status_code == 200:
+                                    status_data = status_resp.json()
                                     
-                                # Refresh button for document list
-                                if st.button("View All Documents"):
-                                    st.switch_page("Document Library")
+                                    if status_data.get("status") == "completed":
+                                        progress_bar.progress(100)
+                                        status_container.success("Processing completed successfully!")
+                                        break
+                                    elif status_data.get("status") == "failed":
+                                        progress_bar.progress(100)
+                                        status_container.error(f"Processing failed: {status_data.get('error')}")
+                                        if "rate limit" in status_data.get("error", "").lower():
+                                            st.warning("""
+                                            Rate limit exceeded. Try again with:
+                                            - Smaller chunk size
+                                            - Wait a few minutes before retrying
+                                            """)
+                                        break
+                                    else:
+                                        progress = status_data.get("progress", 0)
+                                        progress_bar.progress(40 + int(progress * 0.5))  # Scale to fit in our range
+                                        status_container.info(f"Processing: {status_data.get('status')} ({progress}%)")
                                 
-                            else:
-                                # Handle upload failure
-                                progress_bar.progress(100)
-                                status_text.text("Upload failed!")
-                                
-                                upload_status.markdown("❌ Upload failed")
-                                vectorize_status.markdown("❌ Vectorization failed")
-                                index_status.markdown("❌ Indexing failed")
-                                
-                                status = response.status_code if response else "Unknown"
-                                error_msg = f"Error: Failed to upload document. Status: {status}"
-                                
-                                # Add more detailed error info
-                                if not response:
-                                    st.error(error_msg)
-                                    st.error(f"Server is not responding. Please check if the backend is running on {server_url}")
-                                else:
-                                    try:
-                                        error_data = response.json()
-                                        error_msg += f"\nError details: {error_data.get('error', 'Unknown error')}"
-                                        st.error(error_msg)
-                                        st.json(error_data)
-                                    except:
-                                        st.error(f"{error_msg}\nResponse: {response.text}")
-                        except Exception as e:
-                            upload_status.markdown("❌ Upload error")
-                            vectorize_status.markdown("❌ Process error")
-                            index_status.markdown("❌ Process error")
-                            st.error(f"Error during upload: {str(e)}")
-                    except Exception as e:
-                        st.error(f"Error during upload process: {str(e)}")
-    
-    # Add system status visualization
-    with tabs[0]:
-        with st.expander("Storage System Status"):
-            try:
-                status_response = api_call("system/status", method="GET", timeout=5)
-                if status_response and status_response.status_code == 200:
-                    system_status = status_response.json()
-                    
-                    # Create status indicators
-                    st.markdown("### Storage Systems")
-                    
-                    cols = st.columns(2)
-                    with cols[0]:
-                        gcp_status = "operational" if system_status.get("components", {}).get("gcsStorage") == "operational" else "degraded"
-                        gcp_icon = "✅" if gcp_status == "operational" else "⚠️"
-                        st.markdown(f"{gcp_icon} **Google Cloud Storage**: {gcp_status.title()}")
+                                time.sleep(3)  # Wait between polls
+                    else:
+                        progress_bar.progress(100)
+                        status_text.text("Upload failed")
                         
-                    with cols[1]:
-                        chroma_status = "operational" if system_status.get("components", {}).get("documentStorage") == "operational" else "degraded"
-                        chroma_icon = "✅" if chroma_status == "operational" else "⚠️"
-                        st.markdown(f"{chroma_icon} **Document Database**: {chroma_status.title()}")
-                    
-                    # If any system is degraded, show message
-                    if gcp_status != "operational" or chroma_status != "operational":
-                        st.warning("One or more storage systems are experiencing issues. Documents may still upload but with limited functionality.")
-                        
-                        if system_status.get("components", {}).get("documentStorageMessage"):
-                            st.info(f"Storage message: {system_status['components']['documentStorageMessage']}")
-                else:
-                    st.error("Could not retrieve system status")
-            except Exception as e:
-                st.error(f"Error checking system status: {str(e)}")
+                        if response:
+                            error_message = "Unknown error"
+                            try:
+                                error_data = response.json()
+                                error_message = error_data.get("error", "Unknown error")
+                            except:
+                                error_message = response.text
+                                
+                            st.error(f"Upload failed: {error_message}")
+                            
+                            # Special handling for rate limit errors
+                            if response.status_code == 429 or "rate limit" in error_message.lower():
+                                st.warning("""
+                                ⚠️ Rate limit exceeded. Please try:
+                                - Using optimized processing mode
+                                - Reducing chunk size
+                                - Waiting a few minutes before uploading again
+                                """)
+                        else:
+                            st.error("Upload failed - server error")
     
     # Tab 2: Document Library
     with tabs[1]:
         st.subheader("Document Library")
-        st.write("View and manage your uploaded documents")
         
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.write("Documents in your knowledge base")
+        
+        with col2:
+            # Add a check for mock data option
+            use_mock = st.checkbox("Use sample data", value=False, 
+                                  help="If checked, displays sample documents when ChromaDB is unavailable")
+        
+        # Button to refresh or load mock data
         if st.button("Refresh Document List"):
             with st.spinner("Fetching documents..."):
-                response = api_call("documents/list", method="GET")
+                # Use mock list if selected, or if regular list fails
+                if use_mock:
+                    response = api_call("documents/mock-list", method="GET")
+                else:
+                    response = api_call("documents/list", method="GET")
+                    
+                    # Fall back to mock data if real data fails
+                    if not response or response.status_code != 200:
+                        st.warning("Could not fetch real documents, showing sample data instead")
+                        response = api_call("documents/mock-list", method="GET")
                 
+                # Process the response
                 if response and response.status_code == 200:
-                    docs = response.json().get("documents", [])
+                    result = response.json()
+                    docs = result.get("documents", [])
+                    
+                    # Check if there's an error message in the response
+                    if "error" in result:
+                        st.warning(f"⚠️ Backend Warning: {result['error']}")
+                    
                     if docs:
                         # Create a table of documents
                         docs_df = pd.DataFrame(
-                            [[doc.get("documentId"), 
+                            [[doc.get("documentId", "Unknown"), 
                               doc.get("metadata", {}).get("originalName", "Unknown"),
                               doc.get("metadata", {}).get("uploadedAt", "Unknown"),
+                              doc.get("metadata", {}).get("source", "upload"),
                               "✅" if doc.get("processed", False) else "⏳"] 
                              for doc in docs],
-                            columns=["Document ID", "Filename", "Upload Date", "Status"]
+                            columns=["Document ID", "Filename", "Upload Date", "Source", "Status"]
                         )
                         
                         st.dataframe(docs_df, use_container_width=True)
+                        
+                        # Show document count summary
+                        st.success(f"Found {len(docs)} documents in your collection")
+                        
+                        # Group documents by source
+                        sources = docs_df["Source"].value_counts().to_dict()
+                        source_text = ", ".join([f"{count} {source}" for source, count in sources.items()])
+                        st.write(f"Sources: {source_text}")
                         
                         # Allow selection of a document for details
                         selected_doc = st.selectbox(
@@ -604,13 +578,116 @@ elif selected_api == "Document Management":
                                 with st.expander("Raw Document Data"):
                                     st.json(doc_details)
                     else:
-                        st.info("No documents found. Upload a document first.")
+                        st.info("No documents found in your ChromaDB collection.")
+                        
+                        # Add helpful guidance for new users
+                        st.markdown("""
+                        ### To add documents:
+                        1. **Upload a document** - Go to the 'Upload Document' tab and upload a PDF or DOCX file
+                        2. **Import from Google Drive** - Go to the 'Google Drive Integration' tab to import documents
+                        """)
                 else:
                     status = response.status_code if response else "Unknown"
                     st.error(f"Error: Failed to fetch documents. Status: {status}")
+                    
+                    # Try to extract more detailed error information
+                    try:
+                        error_details = response.json()
+                        st.json(error_details)
+                    except:
+                        st.error("Could not parse error response")
     
-    # Tab 3: Query Documents
+    # Tab 3: Google Drive Integration
     with tabs[2]:
+        st.subheader("Google Drive Integration")
+        st.write("Process documents from Google Drive")
+        
+        # Input for Google Drive folder ID
+        drive_folder_id = st.text_input(
+            "Google Drive Folder ID", 
+            help="Enter the ID of the Google Drive folder containing your documents"
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("List Files") and drive_folder_id:
+                with st.spinner("Fetching files from Google Drive..."):
+                    response = api_call(f"drive-documents/list?folderId={drive_folder_id}", method="GET")
+                    
+                    if response and response.status_code == 200:
+                        files = response.json().get("files", [])
+                        if files:
+                            # Store files in session state for later use
+                            st.session_state.drive_files = files
+                            
+                            # Create a table of files
+                            files_df = pd.DataFrame(
+                                [[
+                                    file.get("name"),
+                                    file.get("id"),
+                                    file.get("mimeType"),
+                                    "✅" if file.get("processed") else "⏳" 
+                                ] for file in files],
+                                columns=["Filename", "ID", "Type", "Status"]
+                            )
+                            
+                            st.dataframe(files_df, use_container_width=True)
+                        else:
+                            st.info("No files found in the specified folder.")
+                    else:
+                        st.error("Failed to fetch files from Google Drive.")
+        
+        with col2:
+            if st.button("Process All Files") and drive_folder_id:
+                with st.spinner("Processing all files in folder..."):
+                    payload = {"folderId": drive_folder_id}
+                    response = api_call("drive-documents/process-folder", method="POST", data=payload)
+                    
+                    if response and response.status_code == 202:
+                        result = response.json()
+                        st.success(f"Processing started for {result.get('filesToProcess')} files.")
+                        
+                        # Show files that will be processed
+                        st.write("Files being processed:")
+                        for file in result.get("files", []):
+                            st.write(f"• {file.get('name')}")
+                            
+                        st.info("This process runs in the background. Check the Document Library tab later to see the processed files.")
+                    else:
+                        st.error("Failed to start folder processing.")
+        
+        # Individual file processing
+        if 'drive_files' in st.session_state and st.session_state.drive_files:
+            st.subheader("Process Individual Files")
+            
+            # Allow selection of a file to process
+            file_options = {f"{file['name']} ({file['id']})": file for file in st.session_state.drive_files}
+            selected_file_key = st.selectbox("Select a file to process", options=list(file_options.keys()))
+            
+            if selected_file_key and st.button("Process Selected File"):
+                selected_file = file_options[selected_file_key]
+                
+                with st.spinner(f"Processing file: {selected_file['name']}"):
+                    payload = {
+                        "fileId": selected_file["id"],
+                        "fileName": selected_file["name"],
+                        "folderId": drive_folder_id
+                    }
+                    
+                    response = api_call("drive-documents/process", method="POST", data=payload)
+                    
+                    if response and response.status_code in [200, 202]:
+                        result = response.json()
+                        if result.get("status") == "completed":
+                            st.success("File already processed successfully.")
+                        else:
+                            st.success("File processing started.")
+                            st.info("This process runs in the background. Check the Document Library tab later to see the processed file.")
+                    else:
+                        st.error("Failed to process the selected file.")
+    
+    # Tab 4: Query Documents
+    with tabs[3]:
         st.subheader("Query Documents")
         st.write("Search for information across your uploaded documents")
         
@@ -651,8 +728,8 @@ elif selected_api == "Document Management":
                     status = response.status_code if response else "Unknown"
                     st.error(f"Error: Failed to query documents. Status: {status}")
     
-    # Tab 4: Generate Document-Based Strategy
-    with tabs[3]:
+    # Tab 5: Generate Document-Based Strategy
+    with tabs[4]:
         st.subheader("Generate Document-Based Sales Strategy")
         st.write("Generate a sales strategy using insights from uploaded documents")
         

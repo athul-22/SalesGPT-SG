@@ -1,8 +1,8 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const mainRouter = require('./routes/main');
-const cors = require('cors');  // Add this import
-const chromaService = require('./services/chromaService'); // Add this import
+const cors = require('cors');
+const { chromaClient, verifyChromaConnection } = require('./services/chromaService');
 
 // Load environment variables
 dotenv.config();
@@ -28,77 +28,42 @@ app.use('/api', mainRouter);
 function startServer() {
   app.listen(port, () => {
     console.log(`✅ Server running on port ${port}`);
-    // Update the Streamlit app's BASE_URL if needed
     console.log(`✅ For Streamlit app, set BASE_URL="http://localhost:${port}/api"`);
   }).on('error', (err) => {
-    console.error('Error starting server:', err);
-    process.exit(1);
+    if (err.code === 'EADDRINUSE' && ports.length > 0) {
+      server.close();
+      startServer(ports);
+    } else {
+      console.error('Error starting server:', err);
+      process.exit(1);
+    }
   });
 }
 
-const { ChromaClient } = require('chromadb');
-require('dotenv').config();
-
-// Update the testChromaConnection function
-
+// Test ChromaDB connection - use the imported function from chromaService
 async function testChromaConnection() {
   try {
-    //console.log('Testing ChromaDB cloud connection...');
+    const connected = await verifyChromaConnection();
     
-    const client = new ChromaClient({
-      path: "https://api.trychroma.com:8000",
-      auth: { 
-        provider: "token", 
-        credentials: process.env.CHROMA_API_TOKEN || 'ck-EAZozmhtW1dT5YonuwLwTYhqkYZkjG1f3LBkKZW3YZZr',
-        tokenHeaderType: "X-Chroma-Token" 
-      },
-      tenant: process.env.CHROMA_TENANT || 'b5ba23cc-d04e-4a55-a175-e3ace27792c9',
-      database: process.env.CHROMA_DATABASE || 'KnowledgeBase'
-    });
-    
-    // Try to get user identity first to validate authentication
-    try {
-      const userIdentity = await client.heartbeat();
-      console.log(`✅ ChromaDB connection authenticated: ${userIdentity}`);
-      
-      // If that works, list collections
-      const collections = await client.listCollections();
-      console.log(`✅ ChromaDB found ${collections.length} collections`);
-    } catch (authError) {
-      console.error('ChromaDB authentication failed:', authError.message);
-      console.log('Please check your CHROMA_API_TOKEN in .env file');
+    if (connected) {
+      try {
+        // If connection is verified, try to list collections
+        const collections = await chromaClient.listCollections();
+        console.log(`✅ ChromaDB found ${collections.length} collections`);
+      } catch (operationError) {
+        console.error('ChromaDB operation failed:', operationError.message);
+      }
     }
   } catch (error) {
-    console.error('Error testing ChromaDB cloud connection:', error);
+    console.error('Error testing ChromaDB connection:', error);
   }
 }
 
+// Call the test function
 testChromaConnection();
 
-// Test storage system on startup but don't block server
-async function testStorage() {
-  try {
-    //console.log('Testing document storage system...');
-    
-    // Skip the document creation test that's causing errors
-    // Instead, just check if ChromaDB client is initialized
-    if (chromaService.client) {
-      console.log('✅ ChromaDB client initialized successfully');
-    } else {
-      console.warn('⚠️ ChromaDB client not initialized');
-    }
-    
-    //console.log('Document storage system check complete - collections will be accessed only when needed');
-  } catch (error) {
-    console.warn('⚠️ Document storage system has issues:', error.message);
-    console.log('The application will continue running with degraded functionality');
-  }
-}
-
-// Start the server
-startServer();
-
-// Test storage after server starts, but don't block startup
-setTimeout(testStorage, 1000);
+// Start the server - ONLY ONCE
+const preferredPorts = [3003, 3002, 3001, 3000];
+startServer(preferredPorts);
 
 

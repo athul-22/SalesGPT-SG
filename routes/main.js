@@ -4,9 +4,11 @@ const { generateSalesStrategy } = require('../controllers/salesStrategy');
 const { generateExaSalesStrategy } = require('../controllers/exaSalesStrategy');
 const { salesCoPilot, clearConversationHistory } = require('../controllers/salesCoPilotController');
 const documentsRouter = require('./documents');
+const driveDocumentsRouter = require('./driveDocuments');
 const linkedinController = require('../controllers/linkedinProfiles');
 const path = require('path');
 const fs = require('fs').promises;
+const chromaService = require('../services/chromaService');
 
 // Original Sales Strategy endpoint
 router.post('/generateSalesStrategy', generateSalesStrategy);
@@ -20,55 +22,38 @@ router.post('/salesCoPilot/clearHistory', clearConversationHistory);
 
 // Other routes
 router.use('/documents', documentsRouter);
+router.use('/drive', driveDocumentsRouter);
 router.post('/linkedinProfiles/search', linkedinController.searchLinkedInProfiles);
 
 // System status route
 router.get('/system/status', async (req, res) => {
+  const status = {
+    server: {
+      status: 'online',
+      version: '1.0.0',
+      timestamp: new Date().toISOString()
+    },
+    components: {
+      documentStorage: 'unknown',
+      gcsStorage: 'unknown'
+    }
+  };
+  
+  // Check ChromaDB connection
   try {
-    // Test different components
-    const status = {
-      server: 'operational',
-      timestamp: new Date().toISOString(),
-      components: {}
+    const collections = await chromaService.listAllCollections();
+    status.components.documentStorage = 'operational';
+    status.components.documentStorageDetail = {
+      collections: collections.length,
+      names: collections.map(c => c.name)
     };
-    
-    // Check local storage
-    try {
-      const dataPath = path.join(__dirname, '../data');
-      await fs.access(dataPath);
-      status.components.localStorage = 'operational';
-    } catch (err) {
-      status.components.localStorage = 'degraded';
-      status.components.localStorageMessage = 'Storage directories not accessible';
-    }
-    
-    // Check ChromaDB
-    try {
-      const chromaService = require('../services/chromaService');
-      await chromaService.getOrCreateCollection();
-      status.components.documentStorage = 'operational';
-    } catch (err) {
-      status.components.documentStorage = 'degraded';
-      status.components.documentStorageMessage = err.message;
-    }
-    
-    // Add memory usage
-    const memoryUsage = process.memoryUsage();
-    status.resources = {
-      memory: {
-        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
-        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
-        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`
-      }
-    };
-    
-    res.status(200).json(status);
   } catch (error) {
-    res.status(500).json({ 
-      error: 'Error checking system status',
-      message: error.message
-    });
+    console.error('ChromaDB connection error:', error.message);
+    status.components.documentStorage = 'degraded';
+    status.components.documentStorageMessage = `ChromaDB error: ${error.message}`;
   }
+  
+  return res.status(200).json(status);
 });
 
 module.exports = router;

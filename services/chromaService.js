@@ -1,362 +1,458 @@
 const { ChromaClient } = require('chromadb');
 const openaiService = require('./openaiService');
-const path = require('path');
+const dotenv = require('dotenv');
 
-class ChromaService {
-  constructor() {
-    // Initialize ChromaDB client
-    this.initClient();
-  }
+dotenv.config();
+
+// Create a simple client with cloud configuration
+const chromaClient = new ChromaClient({
+  path: "https://api.trychroma.com:8000",
+  auth: { 
+    provider: "token", 
+    credentials: process.env.CHROMA_API_TOKEN,
+    tokenHeaderType: "X_CHROMA_TOKEN" 
+  },
+  tenant: process.env.CHROMA_TENANT,
+  database: process.env.CHROMA_DATABASE || 'KnowledgeBase'
+});
+
+// Add this utility function for retrying operations with exponential backoff
+async function retryWithBackoff(operation, maxRetries = 5, initialDelay = 2000, maxDelay = 30000) {
+  let retries = 0;
+  let delay = initialDelay;
   
-  initClient() {
+  while (retries < maxRetries) {
     try {
-      // Try cloud connection first
-      this.client = new ChromaClient({
-        path: "https://api.trychroma.com:8000",
-        auth: { 
-          provider: "token", 
-          credentials: process.env.CHROMA_API_TOKEN || 'ck-EAZozmhtW1dT5YonuwLwTYhqkYZkjG1f3LBkKZW3YZZr',
-          tokenHeaderType: "X-Chroma-Token"
-        },
-        tenant: process.env.CHROMA_TENANT || 'b5ba23cc-d04e-4a55-a175-e3ace27792c9',
-        database: process.env.CHROMA_DATABASE || 'KnowledgeBase'
-      });
-      console.log('Initialized ChromaDB cloud client');
-    } catch (err) {
-      console.log("Falling back to in-memory ChromaDB");
-      // Fallback to in-memory storage
-      this.client = new ChromaClient({
-        path: "chromadb",
-        fetchOptions: { useInMemory: true }
-      });
-    }
-  }
-
-  // Create a sanitized collection name from a file name
-  createCollectionName(originalName, documentId) {
-    // Remove file extension and sanitize name
-    const baseName = originalName.replace(/\.[^/.]+$/, "");
-    const sanitized = baseName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-    // Truncate if needed and add prefix & document ID for uniqueness
-    const truncated = sanitized.substring(0, 25);
-    return `doc_${truncated}_${documentId.substring(0, 8)}`;
-  }
-
-  /**
-   * Create embedding function
-   */
-  createEmbeddingFunction() {
-    return {
-      generate: async (texts) => {
-        try {
-          // Convert single string to array if needed
-          const textArray = Array.isArray(texts) ? texts : [texts];
-          
-          // Generate embeddings
-          const embeddings = await Promise.all(
-            textArray.map(async (text) => {
-              // Use a safer approach for empty/invalid texts
-              if (!text || typeof text !== 'string' || text.length < 5) {
-                return new Array(1536).fill(0); // Return zero vector for empty text
-              }
-              try {
-                return await openaiService.generateEmbedding(text);
-              } catch (err) {
-                console.error('Error generating embedding:', err);
-                return new Array(1536).fill(0); // Return zero vector on error
-              }
-            })
-          );
-          return embeddings;
-        } catch (err) {
-          console.error('Error in embedding function:', err);
-          // Return dummy embeddings (1536 dimensions for OpenAI)
-          return Array.isArray(texts) ? 
-            texts.map(() => new Array(1536).fill(0)) : 
-            [new Array(1536).fill(0)];
-        }
+      return await operation();
+    } catch (error) {
+      retries++;
+      
+      // If this was our last retry, throw the error
+      if (retries >= maxRetries) {
+        throw new Error(`Operation failed after ${maxRetries} retries: ${error.message}`);
       }
-    };
-  }
-
-  /**
-   * Get or create a collection with the specified name
-   */
-  async getOrCreateCollection(collectionName = 'default_collection') {
-    try {
-      const embeddingFunction = this.createEmbeddingFunction();
       
-      // Try to get the existing collection
-      try {
-        const collection = await this.client.getCollection({
-          name: collectionName,
-          embeddingFunction: embeddingFunction
-        });
-        console.log(`Retrieved existing collection: ${collectionName}`);
-        return collection;
-      } catch (error) {
-        if (error.message && error.message.includes('not found')) {
-          console.log(`Creating new collection: ${collectionName}`);
-          const collection = await this.client.createCollection({
-            name: collectionName,
-            embeddingFunction: embeddingFunction
-          });
-          return collection;
-        } else {
-          throw error;
-        }
-      }
-    } catch (error) {
-      console.error(`Error accessing ChromaDB collection "${collectionName}":`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * List all collections
-   */
-  async listAllCollections() {
-    try {
-      const collections = await this.client.listCollections();
-      return collections;
-    } catch (error) {
-      console.error('Error listing ChromaDB collections:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get basic information about a collection
-   */
-  async getCollectionInfo(collectionName) {
-    try {
-      const collection = await this.getOrCreateCollection(collectionName);
-      return await collection.get();
-    } catch (error) {
-      console.error(`Error getting info for collection "${collectionName}":`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Add document to a specific collection
-   */
-  async addDocumentToCollection(text, metadata, id, collectionName) {
-    try {
-      // Get or create the collection
-      const collection = await this.getOrCreateCollection(collectionName);
-      
-      // Split text into chunks if it's too long
-      const chunks = this.splitTextIntoChunks(text, 1000);
-      
-      // Add each chunk with the same document ID but different chunk IDs
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkId = `${id}-chunk-${i}`;
-        const chunkMetadata = { 
-          ...metadata, 
-          chunkId: chunkId,
-          documentId: id,
-          chunkIndex: i,
-          totalChunks: chunks.length
-        };
+      // For rate limit errors, use longer delays
+      if ((error.message && error.message.includes('429')) || 
+          (error.status === 429) || 
+          (error.message && error.message.includes('Too Many Requests'))) {
         
-        await collection.add({
-          ids: [chunkId],
-          documents: [chunks[i]],
-          metadatas: [chunkMetadata]
-        });
+        // Apply jitter to prevent all clients retrying at the same time
+        const jitter = Math.random() * 1000;
+        const actualDelay = Math.min(delay + jitter, maxDelay);
+        
+        console.log(`Rate limit hit, retrying in ${Math.floor(actualDelay)}ms (attempt ${retries}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, actualDelay));
+        
+        // Exponential backoff - double the delay for next retry
+        delay = Math.min(delay * 2, maxDelay);
+        continue;
       }
       
-      console.log(`Added document (${chunks.length} chunks) to collection "${collectionName}"`);
-      return { success: true, id, collectionName };
-    } catch (error) {
-      console.error(`Error adding document to collection "${collectionName}":`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Add document with per-document collections
-   */
-  async addDocument(text, metadata, id) {
-    try {
-      // Create a collection name based on the document name
-      const collectionName = this.createCollectionName(
-        metadata.originalName || 'document', 
-        id
-      );
-      
-      // Create metadata with collection reference
-      const updatedMetadata = {
-        ...metadata,
-        collectionName
-      };
-      
-      // Add to collection
-      return await this.addDocumentToCollection(text, updatedMetadata, id, collectionName);
-    } catch (error) {
-      console.error('Error adding document:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get document from a specific collection
-   */
-  async getDocumentFromCollection(documentId, collectionName) {
-    try {
-      const collection = await this.getOrCreateCollection(collectionName);
-      
-      // Get all chunks for this document
-      const result = await collection.get({
-        where: { documentId: documentId }
-      });
-      
-      if (!result || !result.ids || result.ids.length === 0) {
-        throw new Error(`Document ${documentId} not found in collection ${collectionName}`);
+      // For other errors, use shorter retries or rethrow based on type
+      if (error.message && (
+          error.message.includes('timeout') || 
+          error.message.includes('connection') ||
+          error.message.includes('network'))) {
+        
+        console.log(`Network error, retrying in ${delay}ms (attempt ${retries}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 1.5, maxDelay);
+        continue;
       }
       
-      // Reconstruct the document from chunks
-      const chunks = result.ids.map((id, index) => ({
-        id,
-        text: result.documents[index],
-        metadata: result.metadatas[index],
-        chunkIndex: result.metadatas[index].chunkIndex || 0
-      })).sort((a, b) => a.chunkIndex - b.chunkIndex);
-      
-      const fullText = chunks.map(chunk => chunk.text).join('');
-      const metadata = chunks[0].metadata;
-      
-      return {
-        id: documentId,
-        text: fullText,
-        metadata,
-        source: 'chromadb',
-        collectionName
-      };
-    } catch (error) {
-      console.error(`Error getting document from collection "${collectionName}":`, error);
+      // For all other errors, rethrow
       throw error;
     }
-  }
-
-  /**
-   * Query a specific collection
-   */
-  async queryCollection(queryText, limit = 5, collectionName) {
-    try {
-      const collection = await this.getOrCreateCollection(collectionName);
-      
-      const results = await collection.query({
-        queryTexts: [queryText],
-        nResults: limit
-      });
-      
-      // Add collection name to results
-      return {
-        ...results,
-        collectionName
-      };
-    } catch (error) {
-      console.error(`Error querying collection "${collectionName}":`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Query all document collections (collections that start with "doc_")
-   */
-  async queryAllDocumentCollections(queryText, limit = 5) {
-    try {
-      // List all collections
-      const collections = await this.listAllCollections();
-      
-      // Filter for document collections
-      const docCollections = collections.filter(col => col.name.startsWith('doc_'));
-      
-      if (docCollections.length === 0) {
-        return {
-          ids: [[]],
-          documents: [[]],
-          metadatas: [[]],
-          distances: [[]]
-        };
-      }
-      
-      // Query each collection
-      const allResults = await Promise.all(
-        docCollections.map(col => this.queryCollection(queryText, limit, col.name))
-      );
-      
-      // Merge results from all collections
-      const merged = {
-        ids: [[]],
-        documents: [[]],
-        metadatas: [[]],
-        distances: [[]],
-        collections: []
-      };
-      
-      allResults.forEach(result => {
-        if (result && result.ids && result.ids[0] && result.ids[0].length > 0) {
-          merged.ids[0] = merged.ids[0].concat(result.ids[0]);
-          merged.documents[0] = merged.documents[0].concat(result.documents[0]);
-          merged.metadatas[0] = merged.metadatas[0].concat(result.metadatas[0]);
-          merged.distances[0] = merged.distances[0].concat(result.distances[0]);
-          
-          // Add collection info to each metadata item
-          const collectionName = result.collectionName;
-          merged.collections.push(collectionName);
-          
-          // Add collection name to metadata
-          for (let i = merged.metadatas[0].length - result.metadatas[0].length; i < merged.metadatas[0].length; i++) {
-            merged.metadatas[0][i].collectionName = collectionName;
-          }
-        }
-      });
-      
-      // Sort by distance (lower is better)
-      const sortIndices = merged.distances[0]
-        .map((dist, idx) => ({ dist, idx }))
-        .sort((a, b) => a.dist - b.dist)
-        .map(item => item.idx);
-      
-      // Re-sort all arrays based on distance
-      merged.ids[0] = sortIndices.map(idx => merged.ids[0][idx]);
-      merged.documents[0] = sortIndices.map(idx => merged.documents[0][idx]);
-      merged.metadatas[0] = sortIndices.map(idx => merged.metadatas[0][idx]);
-      merged.distances[0] = sortIndices.map(idx => merged.distances[0][idx]);
-      
-      // Limit results if needed
-      if (merged.ids[0].length > limit) {
-        merged.ids[0] = merged.ids[0].slice(0, limit);
-        merged.documents[0] = merged.documents[0].slice(0, limit);
-        merged.metadatas[0] = merged.metadatas[0].slice(0, limit);
-        merged.distances[0] = merged.distances[0].slice(0, limit);
-      }
-      
-      return merged;
-    } catch (error) {
-      console.error('Error querying all document collections:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Split text into chunks of roughly equal size
-   */
-  splitTextIntoChunks(text, chunkSize = 1000) {
-    if (!text) return [];
-    
-    // Simple chunk splitting by length
-    const chunks = [];
-    
-    for (let i = 0; i < text.length; i += chunkSize) {
-      chunks.push(text.substring(i, i + chunkSize));
-    }
-    
-    return chunks;
   }
 }
 
-module.exports = new ChromaService();
+// Add document to ChromaDB with smaller chunk size and more aggressive batching
+async function addDocument(text, metadata, documentId) {
+  try {
+    console.log(`Adding document to ChromaDB: ${documentId}`);
+    
+    // Generate collection name
+    const collectionName = createCollectionName(documentId);
+    
+    // Create collection first (separate from adding data)
+    const collection = await retryWithBackoff(() => getOrCreateCollection(collectionName));
+    console.log(`Successfully got/created collection for ${documentId}`);
+    
+    // Split text into even smaller chunks
+    const MAX_CHUNK_SIZE = 500; // Smaller chunks 
+    const chunks = [];
+    const metadatas = [];
+    const ids = [];
+    
+    // Simple text chunking by size
+    for (let i = 0; i < text.length; i += MAX_CHUNK_SIZE) {
+      const chunk = text.substring(i, i + MAX_CHUNK_SIZE);
+      // Skip empty chunks
+      if (chunk.trim().length === 0) continue;
+      
+      chunks.push(chunk);
+      // Add the chunk index to metadata
+      metadatas.push({
+        ...metadata,
+        chunkIndex: Math.floor(i / MAX_CHUNK_SIZE),
+        chunkTotal: Math.ceil(text.length / MAX_CHUNK_SIZE)
+      });
+      ids.push(`${documentId}_${Math.floor(i / MAX_CHUNK_SIZE)}`);
+    }
+    
+    // If no valid chunks, create one with minimal content
+    if (chunks.length === 0) {
+      chunks.push("Empty document");
+      metadatas.push(metadata);
+      ids.push(`${documentId}_0`);
+    }
+    
+    // Process data in very small batches with longer delays
+    const BATCH_SIZE = 2; // Even smaller batches
+    
+    console.log(`Adding ${chunks.length} chunks in batches of ${BATCH_SIZE}...`);
+    
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batchIds = ids.slice(i, i + BATCH_SIZE);
+      const batchChunks = chunks.slice(i, i + BATCH_SIZE);
+      const batchMetadatas = metadatas.slice(i, i + BATCH_SIZE);
+      
+      // Add each batch with retry logic and longer timeouts
+      await retryWithBackoff(
+        () => collection.add({
+          ids: batchIds,
+          documents: batchChunks,
+          metadatas: batchMetadatas
+        }),
+        5, // More retries
+        3000, // Start with longer delay
+        60000 // Up to 60 seconds between retries
+      );
+      
+      console.log(`Added batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(chunks.length/BATCH_SIZE)}`);
+      
+      // Add a much longer delay between batches
+      if (i + BATCH_SIZE < chunks.length) {
+        console.log("Waiting between batches to avoid rate limits...");
+        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
+      }
+    }
+    
+    console.log(`Successfully added ${chunks.length} chunks to collection ${collectionName}`);
+    return { 
+      documentId, 
+      collectionName, 
+      chunkCount: chunks.length 
+    };
+  } catch (error) {
+    console.error(`Error adding document to ChromaDB: ${error.message}`);
+    console.error(`Error stack: ${error.stack}`);
+    throw error;
+  }
+}
+
+// Simplified embedding function that doesn't require OpenAI API
+function createEmbeddingFunction() {
+  return {
+    generate: async (texts) => {
+      try {
+        const textArray = Array.isArray(texts) ? texts : [texts];
+        // Generate simple deterministic embeddings without using the API
+        const embeddings = textArray.map(text => {
+          // This is just a placeholder embedding generator
+          const embedding = new Array(1536).fill(0);
+          if (text && typeof text === 'string') {
+            // Simple hash function to generate consistent vectors
+            let hash = 0;
+            for (let i = 0; i < text.length; i++) {
+              hash = ((hash << 5) - hash) + text.charCodeAt(i);
+              hash = hash & hash; // Convert to 32bit integer
+            }
+            
+            // Use the hash as a seed to generate vector values
+            const seed = Math.abs(hash);
+            for (let i = 0; i < 1536; i++) {
+              // Generate a value between 0 and 1 based on the position and seed
+              embedding[i] = ((seed * (i + 1)) % 1000) / 1000;
+            }
+          }
+          return embedding;
+        });
+        
+        return embeddings;
+      } catch (err) {
+        console.error('Error generating embeddings:', err);
+        return Array.isArray(texts) ? 
+          texts.map(() => new Array(1536).fill(0)) : 
+          [new Array(1536).fill(0)];
+      }
+    }
+  };
+}
+
+// Add OpenAI embedding function
+function createOpenAIEmbeddingFunction() {
+  return {
+    generate: async (texts) => {
+      // Make sure texts is an array
+      const textArray = Array.isArray(texts) ? texts : [texts];
+      // Filter out any null/undefined/empty texts
+      const validTexts = textArray.filter(text => text && typeof text === 'string' && text.trim().length > 0);
+      
+      if (validTexts.length === 0) {
+        return []; // Return empty array if no valid texts
+      }
+      
+      try {
+        // Use OpenAI service to get embeddings
+        const embeddings = await openaiService.createEmbeddings(validTexts);
+        return embeddings;
+      } catch (error) {
+        console.error('Error generating embeddings:', error);
+        throw error;
+      }
+    }
+  };
+}
+
+// Add this new function for creating simple deterministic embeddings
+// This will be more reliable than trying to compute them on the fly
+
+function createSimpleEmbeddings(texts) {
+  // Ensure texts is an array
+  const textArray = Array.isArray(texts) ? texts : [texts];
+  
+  // For each text, create a deterministic embedding
+  return textArray.map(text => {
+    const embedding = new Array(1536).fill(0);
+    
+    if (!text || typeof text !== 'string' || text.length < 3) {
+      // For empty or tiny texts, return zero embedding
+      return embedding;
+    }
+    
+    // Simple deterministic embedding based on character codes
+    // This creates vectors that are consistent for the same text
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(i);
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    
+    // Use hash as seed for pseudorandom but deterministic values
+    const seed = Math.abs(hash);
+    for (let i = 0; i < 1536; i++) {
+      // Generate values between -1 and 1
+      embedding[i] = (((seed * (i + 1)) % 1000) / 500) - 1;
+    }
+    
+    // Normalize the vector to unit length
+    const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+    return embedding.map(val => val / (magnitude || 1));
+  });
+}
+
+function createCollectionName(documentId) {
+  return `doc_${documentId}`;
+}
+
+async function listAllCollections() {
+  try {
+    const collections = await chromaClient.listCollections();
+    return collections;
+  } catch (error) {
+    console.error('Error listing collections:', error);
+    throw error;
+  }
+}
+
+async function getOrCreateCollection(collectionName = 'pdf_documents') {
+  try {
+    try {
+      const collection = await chromaClient.getCollection({
+        name: collectionName,
+        embeddingFunction: createEmbeddingFunction()
+      });
+      console.log(`Retrieved collection: ${collectionName}`);
+      return collection;
+    } catch (error) {
+      if (error.message && (error.message.includes('not found') || 
+                          error.name === 'ChromaNotFoundError')) {
+        console.log(`Creating new collection: ${collectionName}`);
+        return await chromaClient.createCollection({
+          name: collectionName,
+          embeddingFunction: createEmbeddingFunction()
+        });
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error(`Error with collection "${collectionName}":`, error.message);
+    throw error;
+  }
+}
+
+async function verifyChromaConnection() {
+  try {
+    const heartbeat = await chromaClient.heartbeat();
+    console.log(`✅ ChromaDB connection successful! Heartbeat: ${heartbeat}`);
+    return true;
+  } catch (error) {
+    console.error('❌ ChromaDB connection failed:', error.message);
+    return false;
+  }
+}
+
+// Add other required functions
+async function getDocumentFromCollection(documentId, collectionName) {
+  try {
+    const collection = await chromaClient.getCollection({
+      name: collectionName,
+      embeddingFunction: createEmbeddingFunction()
+    });
+    
+    const result = await collection.get({
+      where: { documentId: documentId }
+    });
+    
+    if (!result || !result.ids || result.ids.length === 0) {
+      return null;
+    }
+    
+    const chunks = [];
+    for (let i = 0; i < result.documents.length; i++) {
+      chunks.push({
+        id: result.ids[i],
+        text: result.documents[i],
+        metadata: result.metadatas[i]
+      });
+    }
+    
+    chunks.sort((a, b) => 
+      (a.metadata.chunkIndex || 0) - (b.metadata.chunkIndex || 0)
+    );
+    
+    const fullText = chunks.map(chunk => chunk.text).join(' ');
+    
+    return {
+      id: documentId,
+      collectionName,
+      metadata: chunks[0].metadata,
+      text: fullText,
+      chunks: chunks.length
+    };
+  } catch (error) {
+    console.error(`Error getting document from collection: ${error.message}`);
+    throw error;
+  }
+}
+
+async function getCollectionInfo(collectionName) {
+  try {
+    const collection = await chromaClient.getCollection({
+      name: collectionName,
+      embeddingFunction: createEmbeddingFunction()
+    });
+    
+    return await collection.get();
+  } catch (error) {
+    console.error(`Error getting collection info: ${error.message}`);
+    throw error;
+  }
+}
+
+async function queryAllDocumentCollections(queryText, limit = 5) {
+  try {
+    const collections = await listAllCollections();
+    const docCollections = collections.filter(col => col.name.startsWith('doc_'));
+    
+    if (docCollections.length === 0) {
+      return [];
+    }
+    
+    // Use a simple embedding function
+    const embeddingFunction = {
+      generate: async (texts) => {
+        const textArray = Array.isArray(texts) ? texts : [texts];
+        return textArray.map(text => {
+          const vector = new Array(1536).fill(0);
+          if (text && typeof text === 'string') {
+            for (let i = 0; i < Math.min(text.length, 1536); i++) {
+              vector[i] = (text.charCodeAt(i % text.length) % 100) / 100;
+            }
+          }
+          return vector;
+        });
+      }
+    };
+    
+    const results = [];
+    
+    // Query each collection with error handling
+    for (const colInfo of docCollections) {
+      try {
+        console.log(`Querying collection: ${colInfo.name}`);
+        
+        const collection = await chromaClient.getCollection({
+          name: colInfo.name,
+          embeddingFunction
+        });
+        
+        const queryResult = await collection.query({
+          queryTexts: [queryText],
+          nResults: Math.min(3, limit) // Use fewer results per collection
+        });
+        
+        if (queryResult && queryResult.documents && queryResult.documents[0]) {
+          for (let i = 0; i < queryResult.documents[0].length; i++) {
+            results.push({
+              collectionName: colInfo.name,
+              documentId: queryResult.metadatas[0][i]?.documentId || colInfo.name.replace('doc_', ''),
+              originalName: queryResult.metadatas[0][i]?.originalName || 'Unknown document',
+              text: queryResult.documents[0][i],
+              metadata: queryResult.metadatas[0][i] || {},
+              score: queryResult.distances ? queryResult.distances[0][i] : null
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Error querying collection ${colInfo.name}:`, error.message);
+        // Continue to next collection
+      }
+      
+      // Add a delay between collection queries to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // Sort by relevance (if scores are available)
+    results.sort((a, b) => (a.score || 1) - (b.score || 1));
+    
+    return {
+      documents: results.slice(0, limit),
+      query: queryText,
+      totalCollections: docCollections.length,
+      searchedCollections: docCollections.length,
+      totalResults: results.length
+    };
+  } catch (error) {
+    console.error(`Error querying all collections: ${error.message}`);
+    throw error;
+  }
+}
+
+module.exports = { 
+  chromaClient, 
+  verifyChromaConnection,
+  getOrCreateCollection,
+  createEmbeddingFunction,
+  createOpenAIEmbeddingFunction,
+  createSimpleEmbeddings,
+  listAllCollections,
+  createCollectionName,
+  addDocument,
+  getDocumentFromCollection,
+  getCollectionInfo,
+  queryAllDocumentCollections,
+  retryWithBackoff
+};
