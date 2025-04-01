@@ -14,8 +14,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# Define the base URL for your API
-BASE_URL = "http://localhost:3002/api"
+# Define the base URL for your API - updated to remote server
+BASE_URL = "http://13.201.83.141:3000/api"
 
 # Function to make API calls
 def api_call(endpoint, method="GET", data=None, files=None, timeout=60):
@@ -47,15 +47,22 @@ with st.sidebar:
     
     # Server configuration
     st.subheader("Server Configuration")
-    port = st.selectbox("API Server Port", [3000, 3001, 3002, 3003], index=3)
-    BASE_URL = f"http://localhost:{port}/api"
+    server_options = ["13.201.83.141:3000", "localhost:3000", "localhost:3001", "localhost:3002", "localhost:3003"]
+    server = st.selectbox("API Server", server_options, index=0)
+    
+    # Update BASE_URL based on selection
+    if "localhost" in server:
+        BASE_URL = f"http://{server}/api"
+    else:
+        BASE_URL = f"http://{server}/api"
+    
     st.write(f"Using API endpoint: {BASE_URL}")
     
     # Navigation
     st.subheader("Navigation")
     selected_api = st.radio(
         "Select API",
-        ["Generate Sales Strategy", "Document Management", "LinkedIn Profiles"]  # Updated options
+        ["Generate Sales Strategy", "Document Management", "LinkedIn Profiles"]
     )
 
 # Main content area styling
