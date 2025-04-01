@@ -1,4 +1,7 @@
 const { OpenAI } = require('openai');
+const dotenv = require('dotenv');
+dotenv.config();
+
 
 class OpenAIService {
   constructor() {
