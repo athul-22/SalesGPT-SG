@@ -304,47 +304,51 @@ async function verifyChromaConnection() {
   }
 }
 
-// Add other required functions
+// Improve the getDocumentFromCollection function
 async function getDocumentFromCollection(documentId, collectionName) {
   try {
+    // First check if the collection exists
+    const collections = await chromaClient.listCollections();
+    const collectionExists = collections.some(col => col.name === collectionName);
+    
+    if (!collectionExists) {
+      console.log(`Collection ${collectionName} does not exist`);
+      return null;
+    }
+    
+    // Get the collection
     const collection = await chromaClient.getCollection({
-      name: collectionName,
-      embeddingFunction: createEmbeddingFunction()
+      name: collectionName
     });
     
-    const result = await collection.get({
-      where: { documentId: documentId }
-    });
+    // Get all items in the collection
+    const result = await collection.get();
     
     if (!result || !result.ids || result.ids.length === 0) {
       return null;
     }
     
-    const chunks = [];
-    for (let i = 0; i < result.documents.length; i++) {
-      chunks.push({
-        id: result.ids[i],
-        text: result.documents[i],
-        metadata: result.metadatas[i]
-      });
-    }
+    // Compile document from chunks
+    const chunks = result.documents;
+    const metadatas = result.metadatas;
     
-    chunks.sort((a, b) => 
-      (a.metadata.chunkIndex || 0) - (b.metadata.chunkIndex || 0)
-    );
+    // Use the first metadata as the document metadata
+    const metadata = metadatas[0];
     
-    const fullText = chunks.map(chunk => chunk.text).join(' ');
+    // Join all chunks into a single document
+    const text = chunks.join("\n");
     
     return {
-      id: documentId,
+      documentId,
       collectionName,
-      metadata: chunks[0].metadata,
-      text: fullText,
+      metadata,
+      text,
       chunks: chunks.length
     };
   } catch (error) {
     console.error(`Error getting document from collection: ${error.message}`);
-    throw error;
+    // Return null instead of throwing, so the controller can handle it gracefully
+    return null;
   }
 }
 
@@ -362,30 +366,43 @@ async function getCollectionInfo(collectionName) {
   }
 }
 
+// Fix for chromaService.js - queryAllDocumentCollections function
 async function queryAllDocumentCollections(queryText, limit = 5) {
   try {
-    const collections = await listAllCollections();
-    const docCollections = collections.filter(col => col.name.startsWith('doc_'));
+    // First verify we can access ChromaDB
+    await verifyChromaConnection();
     
-    if (docCollections.length === 0) {
-      return [];
+    const collections = await listAllCollections();
+    console.log(`Retrieved ${collections ? collections.length : 0} collections from ChromaDB`);
+    
+    // Add null check and debugging to see what's being returned
+    if (!collections || !Array.isArray(collections)) {
+      console.log(`ChromaDB collections not available or not in expected format:`, collections);
+      return { 
+        documents: [],
+        query: queryText,
+        totalCollections: 0,
+        searchedCollections: 0,
+        totalResults: 0,
+        error: "No collections available" 
+      };
     }
     
-    // Use a simple embedding function
-    const embeddingFunction = {
-      generate: async (texts) => {
-        const textArray = Array.isArray(texts) ? texts : [texts];
-        return textArray.map(text => {
-          const vector = new Array(1536).fill(0);
-          if (text && typeof text === 'string') {
-            for (let i = 0; i < Math.min(text.length, 1536); i++) {
-              vector[i] = (text.charCodeAt(i % text.length) % 100) / 100;
-            }
-          }
-          return vector;
-        });
-      }
-    };
+    // Add more defensive coding with optional chaining and null checks
+    const docCollections = collections.filter(col => col && col.name && col.name.startsWith('doc_'));
+    
+    console.log(`Found ${docCollections.length} document collections`);
+    
+    if (docCollections.length === 0) {
+      return { 
+        documents: [],
+        query: queryText,
+        totalCollections: collections.length,
+        searchedCollections: 0,
+        totalResults: 0,
+        error: "No document collections found" 
+      };
+    }
     
     const results = [];
     
@@ -396,7 +413,7 @@ async function queryAllDocumentCollections(queryText, limit = 5) {
         
         const collection = await chromaClient.getCollection({
           name: colInfo.name,
-          embeddingFunction
+          embeddingFunction: createEmbeddingFunction()
         });
         
         const queryResult = await collection.query({
@@ -441,6 +458,76 @@ async function queryAllDocumentCollections(queryText, limit = 5) {
   }
 }
 
+// Add this to salesCoPilotController.js 
+const testChromaSearch = async (req, res) => {
+  try {
+    const { query = "test query" } = req.query;
+    
+    console.log(`Testing ChromaDB search with query: "${query}"`);
+    
+    // First check ChromaDB connection
+    const connected = await chromaService.verifyChromaConnection();
+    if (!connected) {
+      return res.status(500).json({
+        success: false,
+        message: 'ChromaDB connection failed',
+        error: 'Failed to connect to ChromaDB'
+      });
+    }
+    
+    // List collections
+    let collections;
+    try {
+      collections = await chromaService.listAllCollections();
+      console.log(`Found ${collections ? collections.length : 0} collections`);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to list ChromaDB collections',
+        error: error.message,
+        stack: error.stack
+      });
+    }
+    
+    // Try to query documents
+    try {
+      const results = await chromaService.queryAllDocumentCollections(query, 5);
+      
+      return res.status(200).json({
+        success: true,
+        query,
+        resultsFound: !!results && !!results.documents && results.documents.length > 0,
+        summary: {
+          collections: collections,
+          totalCollections: collections?.length || 0,
+          docCollections: collections?.filter(col => col && col.name && col.name.startsWith('doc_')).length || 0,
+          searchedCollections: results?.searchedCollections || 0,
+          totalResults: results?.totalResults || 0,
+          documentsReturned: results?.documents?.length || 0
+        },
+        results
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'ChromaDB search failed',
+        collections: collections,
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  } catch (error) {
+    console.error('Error testing ChromaDB search:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error testing ChromaDB search',
+      error: error.message,
+      stack: error.stack
+    });
+  }
+};
+
+// Add to your exports
 module.exports = { 
   chromaClient, 
   verifyChromaConnection,
@@ -454,5 +541,6 @@ module.exports = {
   getDocumentFromCollection,
   getCollectionInfo,
   queryAllDocumentCollections,
-  retryWithBackoff
+  retryWithBackoff,
+  testChromaSearch
 };

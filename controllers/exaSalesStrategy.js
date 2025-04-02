@@ -9,6 +9,12 @@ const generateExaSalesStrategy = async (req, res) => {
     // Extract parameters from request
     const { companyName, targetGeography, businessType, industry, role } = req.body;
     
+    // Extract new user context parameters
+    const { 
+      userContext = {}, // New parameter for user's business context
+      userProfile = {} // New parameter for user's profile information
+    } = req.body;
+    
     if (!companyName) {
       return res.status(400).json({
         success: false,
@@ -16,7 +22,7 @@ const generateExaSalesStrategy = async (req, res) => {
       });
     }
     
-    console.log(`🔍 Generating Exa-powered sales strategy for ${companyName}`);
+    console.log(`🔍 Generating Exa-powered sales strategy for ${companyName} for ${userProfile.name || 'user'}`);
     
     // Step 1: Gather company information from Exa.ai
     let companyProfile = null;
@@ -56,8 +62,23 @@ const generateExaSalesStrategy = async (req, res) => {
       };
     }
     
-    // Step 2: Generate sales strategy using AI
-    const prompt = createSalesStrategyPrompt(companyProfile, errorDetails);
+    // Step 2: Find common connections (if LinkedIn data is available)
+    let commonConnections = [];
+    try {
+      if (userProfile.name) {
+        const connections = await findCommonConnections(userProfile, companyName);
+        commonConnections = connections || [];
+        console.log(`✅ Found ${commonConnections.length} common connections`);
+      }
+    } catch (connectionError) {
+      console.error(`❌ Error finding common connections: ${connectionError.message}`);
+    }
+    
+    // Add common connections to company profile
+    companyProfile.commonConnections = commonConnections;
+    
+    // Step 3: Generate sales strategy using AI
+    const prompt = createSalesStrategyPrompt(companyProfile, errorDetails, userContext, userProfile);
     console.log("🧠 Sending Exa.ai data to AI service for strategy generation");
     
     let salesStrategy = null;
@@ -104,11 +125,36 @@ const generateExaSalesStrategy = async (req, res) => {
 };
 
 /**
+ * Find common connections between user and target company
+ */
+async function findCommonConnections(userProfile, companyName) {
+  try {
+    // This would be implemented using your LinkedinService or similar
+    // Placeholder implementation - replace with actual API call
+    return [];
+  } catch (error) {
+    console.error(`Error finding common connections: ${error}`);
+    return [];
+  }
+}
+
+/**
  * Create the prompt for the AI service to generate a sales strategy
  */
-function createSalesStrategyPrompt(companyProfile, errorDetails) {
+function createSalesStrategyPrompt(companyProfile, errorDetails, userContext, userProfile) {
   return `
-    Generate a comprehensive sales strategy for ${companyProfile.name}.
+    Generate a comprehensive sales strategy for a ${userProfile.businessType || ''} business in the ${userProfile.industry || 'technology'} industry targeting ${companyProfile.name}.
+    
+    SALES REPRESENTATIVE PROFILE:
+    Name: ${userProfile.name || 'Sales Representative'}
+    Role: ${userProfile.role || 'Sales Professional'}
+    Company: ${userProfile.company || 'Our Company'}
+    Business Type: ${userProfile.businessType || 'Service/Product Provider'}
+    Industry Focus: ${userProfile.industry || 'Technology Solutions'}
+    Location: ${userProfile.location || 'Global'}
+    
+    YOUR PRODUCT/SERVICE OFFERING:
+    ${userContext.productDescription || 'A professional solution that helps organizations improve their operations and achieve their goals.'}
     
     COMPANY INFORMATION:
     Name: ${companyProfile.name}
@@ -130,10 +176,15 @@ function createSalesStrategyPrompt(companyProfile, errorDetails) {
     COMPETITORS:
     ${companyProfile.competitors.map(c => `- ${c}`).join('\n')}
     
+    ${companyProfile.commonConnections && companyProfile.commonConnections.length > 0 ? 
+      `COMMON CONNECTIONS:\n${companyProfile.commonConnections.map(c => `- ${c.name}, ${c.title} (Common: ${c.commonBackground})`).join('\n')}` : 
+      'No common connections found.'}
+    
     ${errorDetails ? `NOTE: There was an issue retrieving complete company data: ${errorDetails.message}
     If you know information about this company, please include it in your response.` : ''}
     
-    Please generate a complete sales strategy in the following JSON format:
+    Please generate a complete sales strategy that specifically positions ${userProfile.company || 'our'} ${userProfile.businessType || ''} 
+    solutions for ${companyProfile.name} in the following JSON format:
     {
       "companyName": "${companyProfile.name}",
       "industry": "...",
@@ -158,6 +209,7 @@ function createSalesStrategyPrompt(companyProfile, errorDetails) {
           "benefits": ["...", "..."],
           "differentiation": "..."
         },
+        "relevanceToProspect": "Explain specifically how your ${userProfile.businessType || ''} solution addresses the target company's needs",
         "potentialObstaclesMitigation": {
           "obstacle1": {
             "description": "...",
@@ -169,15 +221,25 @@ function createSalesStrategyPrompt(companyProfile, errorDetails) {
           }
         },
         "engagementStrategy": ["...", "..."],
+        "keyDecisionMakers": [{
+          "role": "...",
+          "approachStrategy": "..."
+        }],
         "competitorAnalysis": [
           {
             "competitor": "Competitor Name",
+            "relevance": "Why this competitor is relevant (industry/size/location match)",
             "strengths": ["...", "..."],
             "weaknesses": ["...", "..."]
           }
-        ]
+        ],
+        "commonConnectionLeverage": "How to leverage any common connections or background"
       }
     }
+    
+    Make the sales strategy highly specific to selling ${userProfile.businessType || ''} solutions from the ${userProfile.industry || ''} industry to this specific company.
+    Focus on how your offering solves their particular problems and creates value for them.
+    Make the competitors relevant to their industry, market location, company size and revenue.
     
     DO NOT wrap the response in markdown code blocks.
     Return ONLY a valid JSON object.

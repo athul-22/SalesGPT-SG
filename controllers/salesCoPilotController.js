@@ -10,7 +10,7 @@ const conversationStore = {};
  */
 const salesCoPilot = async (req, res) => {
   try {
-    const { company, query, userId, user_data = [] } = req.body;
+    const { company, query, userId, user_data = [], userProfile = {}, userContext = {} } = req.body;
 
     // Validation
     if (!company || !query || !userId) {
@@ -61,19 +61,86 @@ const salesCoPilot = async (req, res) => {
     let documentContext = "";
     let documentError = null;
     try {
-      const docResults = await chromaService.queryAllDocumentCollections(
-        `${company} ${query}`, 
-        3
-      );
+      console.log(`Querying ChromaDB with: "${company} ${query}"`);
       
-      if (docResults && docResults.documents && docResults.documents[0]) {
-        // Extract relevant text from documents
-        documentContext = docResults.documents[0].join("\n\n").substring(0, 2000);
-        console.log(`Found relevant document information: ${documentContext.length} characters`);
+      // Create a more comprehensive search query using both the company, query and user data
+      const searchTerms = [`${company}`, `${query}`];
+      
+      // Add any user_data to the search context if available
+      if (user_data && user_data.length > 0) {
+        console.log("Using additional user data for document search");
+        searchTerms.push(...user_data);
+      }
+      
+      // Join with spaces and remove any double spaces
+      const searchQuery = searchTerms.join(' ').replace(/\s+/g, ' ').trim();
+      console.log(`Final ChromaDB search query: "${searchQuery}"`);
+      
+      let docResults = null;
+      try {
+        docResults = await chromaService.queryAllDocumentCollections(searchQuery, 5);
+        console.log("ChromaDB search results:", JSON.stringify({
+          hasResults: !!docResults,
+          totalCollections: docResults?.totalCollections,
+          searchedCollections: docResults?.searchedCollections,
+          totalResults: docResults?.totalResults,
+          documentsCount: docResults?.documents?.length
+        }));
+      } catch (chromaError) {
+        console.error("Error in ChromaDB search:", chromaError);
+        documentError = `ChromaDB search error: ${chromaError.message}`;
+        // Continue without ChromaDB results
+      }
+      
+      // Use fallback empty result if ChromaDB search failed
+      if (!docResults) {
+        docResults = {
+          documents: [],
+          query: searchQuery,
+          totalCollections: 0,
+          searchedCollections: 0,
+          totalResults: 0,
+          error: documentError
+        };
+      }
+      
+      // Process results only if documents exist
+      if (docResults.documents && docResults.documents.length > 0) {
+        // Handle different result structures that might come back
+        let relevantDocs = [];
+        
+        if (Array.isArray(docResults.documents)) {
+          // If documents is an array of documents
+          relevantDocs = docResults.documents;
+        } else if (Array.isArray(docResults.documents[0])) {
+          // If documents is an array of arrays
+          relevantDocs = docResults.documents[0];
+        }
+        
+        if (relevantDocs.length > 0) {
+          // Check if each document is an object with a text property or already a string
+          const texts = relevantDocs.map(doc => {
+            if (typeof doc === 'string') return doc;
+            if (doc && doc.text) return doc.text;
+            if (doc && doc.document) return doc.document;
+            return JSON.stringify(doc).substring(0, 100); // Fallback
+          });
+          
+          documentContext = texts.join("\n\n").substring(0, 3000); // Increased from 2000
+          console.log(`Found relevant document information: ${documentContext.length} characters`);
+        }
+      } else {
+        console.log("No matching documents found in ChromaDB");
+        documentContext = "No relevant documents found in the knowledge base.";
       }
     } catch (error) {
       documentError = `Error searching document database: ${error.message || error}`;
-      console.error(documentError);
+      console.error("ChromaDB search error:", error);
+      
+      // Add more details to help debugging
+      if (error.stack) {
+        console.error("Error stack:", error.stack);
+      }
     }
 
     // Format conversation history for the AI
@@ -85,22 +152,46 @@ const salesCoPilot = async (req, res) => {
     const prompt = `
       You are an AI sales co-pilot assistant, helping a sales professional engage with ${company}.
       
-      COMPANY INFORMATION:
-      ${JSON.stringify(companyInfo, null, 2)}
+      ${userProfile && Object.keys(userProfile).length > 0 ? 
+        `SALES REPRESENTATIVE PROFILE:
+        Name: ${userProfile.name || 'Sales Representative'}
+        Role: ${userProfile.role || 'Sales Professional'}
+        Company: ${userProfile.company || 'Our Company'}
+        Business Type: ${userProfile.businessType || 'Service/Product Provider'}
+        Industry Focus: ${userProfile.industry || 'Technology Solutions'}
+        Location: ${userProfile.location || 'Global'}` : ''}
+      
+      ${userContext && userContext.productDescription ? 
+        `YOUR PRODUCT/SERVICE OFFERING:
+        ${userContext.productDescription}` : ''}
+      
+      ${user_data && user_data.length > 0 ? 
+        `USER-PROVIDED CONTEXT ABOUT THE COMPANY:\n${user_data.join("\n")}\n\n` : ''}
+      
+      COMPANY INFORMATION FROM DATABASE:
+      ${Object.keys(companyInfo).length > 0 ? 
+        JSON.stringify(companyInfo, null, 2) : 
+        "No structured company information available from our database."}
       ${companyError ? `NOTE: ${companyError}` : ''}
       
-      RELEVANT DOCUMENT EXCERPTS:
-      ${documentContext}
+      RELEVANT KNOWLEDGE BASE DOCUMENTS:
+      ${documentContext ? documentContext : "No relevant documents found in knowledge base."}
       ${documentError ? `NOTE: ${documentError}` : ''}
       
       CONVERSATION HISTORY:
-      ${conversationLog}
+      ${conversationLog || "This is the start of the conversation."}
       
       USER QUERY: ${query}
       
-      Provide a helpful, concise response addressing the user's query based on the available information.
-      If there were errors retrieving company information, acknowledge this in your response.
-      Then, suggest 3 relevant follow-up questions the user might want to ask next.
+      First, determine if you have sufficient information to answer the query effectively. If not, acknowledge what's missing.
+      
+      Then, provide a helpful, concise response that:
+      1. Draws from both the company database AND knowledge base documents when relevant
+      2. Clearly indicates when information comes from our knowledge base vs. external company database
+      3. Addresses the specific question without unnecessary information
+      4. When appropriate, suggests ways the sales representative's ${userProfile.businessType || ''} offering in ${userProfile.industry || ''} could be relevant to ${company}'s needs
+      
+      Finally, suggest 3 relevant follow-up questions the user might want to ask next.
       
       Format your response as JSON with the following structure:
       {

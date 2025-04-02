@@ -14,8 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Define the base URL for your API - updated to remote server
-BASE_URL = "http://13.201.83.141:3000/api"
+# Initialize session state variables
+if 'user_name' not in st.session_state:
+    st.session_state.user_name = ""
+
+# Define the base URL for your API
+BASE_URL = "http://localhost:3002/api"
 
 # Function to make API calls
 def api_call(endpoint, method="GET", data=None, files=None, timeout=60):
@@ -62,7 +66,7 @@ with st.sidebar:
     st.subheader("Navigation")
     selected_api = st.radio(
         "Select API",
-        ["Generate Sales Strategy", "Document Management", "LinkedIn Profiles"]
+        ["Generate Sales Strategy", "Document Management", "LinkedIn Profiles", "Sales Co-Pilot"]
     )
 
 # Main content area styling
@@ -137,6 +141,17 @@ if selected_api == "Generate Sales Strategy":
     # Add role in a separate row
     role = st.text_input("Target Role (optional)", "")
     
+    # Add user profile fields with proper options
+    user_name = st.text_input("Your Name", key="user_name")
+    user_business_type = st.selectbox("Your Business Type", options=["Service", "Product"])
+    user_industry = st.text_input("Your Industry", "")
+    user_role = st.text_input("Your Role", "")
+    user_company = st.text_input("Your Company", "")
+    user_location = st.text_input("Your Location", "")
+    
+    # Add user context field
+    user_product_description = st.text_area("Describe your product/service", "")
+
     # Advanced options
     with st.expander("Advanced Options"):
         timeout = st.slider("Request Timeout (seconds)", 30, 300, 120)
@@ -158,8 +173,22 @@ if selected_api == "Generate Sales Strategy":
                     "targetGeography": location if location else None,
                     "businessType": business_type if business_type else None,
                     "industry": industry if industry else None,
-                    "role": role if role else None
+                    "role": role if role else None,
+                    "userProfile": {
+                        "businessType": user_business_type,
+                        "industry": user_industry,
+                        "role": user_role,
+                        "location": user_location,
+                        "company": user_company
+                    },
+                    "userContext": {
+                        "productDescription": user_product_description
+                    }
                 }
+
+                # Add name to userProfile only if it exists and isn't empty
+                if 'user_name' in st.session_state and st.session_state.user_name:
+                    payload["userProfile"]["name"] = st.session_state.user_name
                 
                 # Remove None values
                 payload = {k: v for k, v in payload.items() if v is not None}
@@ -354,430 +383,141 @@ elif selected_api == "Document Management":
     st.title("Document Management")
     
     # Create tabs for different document operations
-    tabs = st.tabs(["Upload Document", "Document Library", "Google Drive Integration", "Query Documents", "Generate Strategy"])
+    doc_tabs = st.tabs(["Upload Document", "Document Library", "Google Drive"])
     
-    # Tab 1: Upload Document 
-    with tabs[0]:
-        st.subheader("Upload Document")
+    with doc_tabs[0]:  # Upload Document
+        st.header("Upload Document")
+        st.write("Upload a document to the knowledge base")
         
-        # Simple server status check
-        if api_call("system/status", timeout=2):
-            st.success("Server is online")
-        else:
-            st.error("Server is offline")
-        
-        # Document uploader
-        uploaded_file = st.file_uploader("Choose a PDF or DOCX file", type=["pdf", "docx"])
-        
-        # Add processing options to help with rate limiting
-        with st.expander("Advanced Options"):
-            processing_mode = st.radio(
-                "Processing mode",
-                ["Standard", "Optimized for large documents"],
-                help="Optimized mode uses smaller chunks and slower processing to avoid rate limits"
-            )
-            
-            chunk_size = st.slider(
-                "Chunk size", 
-                min_value=100, 
-                max_value=1000, 
-                value=250,
-                help="Smaller chunks help avoid rate limits but process slower"
-            )
+        uploaded_file = st.file_uploader("Choose a file (PDF, DOCX)", type=["pdf", "docx"])
         
         if uploaded_file is not None:
-            st.write(f"File: {uploaded_file.name} ({uploaded_file.size/1024:.1f} KB)")
-            
-            # Display recommendations for large files
-            if uploaded_file.size > 1024 * 1024:  # If file is larger than 1MB
-                st.warning("""
-                ⚠️ Large file detected. To avoid rate limit errors:
-                - Use the "Optimized for large documents" processing mode
-                - Reduce chunk size in advanced options
-                - Wait for processing to complete before uploading more files
-                """)
-            
-            if st.button("Upload Document"):
+            if st.button("Process Document"):
                 with st.spinner("Uploading and processing document..."):
-                    # Progress bar
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # Simulate initial progress
-                    for i in range(40):
-                        progress_bar.progress(i)
-                        status_text.text(f"Uploading file... {i}%")
-                        time.sleep(0.02)
-                    
-                    # Prepare payload with advanced options
-                    files = {"document": uploaded_file}
-                    data = {}
-                    
-                    if processing_mode == "Optimized for large documents":
-                        data["optimized"] = "true"
-                        data["chunkSize"] = str(chunk_size)
-                    
-                    # Actual upload
-                    response = api_call("documents/upload", method="POST", files=files, data=data, timeout=120)
-                    
-                    # Update progress based on response
-                    if response and response.status_code in [200, 202]:
-                        result = response.json()
-                        document_id = result.get('documentId')
+                    try:
+                        # Process file upload
+                        files = {"document": uploaded_file}
+                        response = api_call("documents/upload", method="POST", files=files)
                         
-                        # Continue progress animation
-                        for i in range(40, 90):
-                            progress_bar.progress(i)
-                            status_text.text(f"Processing document... {i}%")
-                            time.sleep(0.02)
-                        
-                        # Show success message but inform about background processing
-                        progress_bar.progress(90)
-                        status_text.text("Document queued successfully!")
-                        
-                        st.success("Document uploaded and queued for processing")
-                        st.info(f"Document ID: {document_id}")
-                        
-                        # Add a polling mechanism to check processing status
-                        if st.checkbox("Check processing status"):
-                            status_container = st.empty()
-                            
-                            for _ in range(5):  # Poll a few times
-                                status_resp = api_call(f"documents/{document_id}/status", method="GET")
-                                
-                                if status_resp and status_resp.status_code == 200:
-                                    status_data = status_resp.json()
-                                    
-                                    if status_data.get("status") == "completed":
-                                        progress_bar.progress(100)
-                                        status_container.success("Processing completed successfully!")
-                                        break
-                                    elif status_data.get("status") == "failed":
-                                        progress_bar.progress(100)
-                                        status_container.error(f"Processing failed: {status_data.get('error')}")
-                                        if "rate limit" in status_data.get("error", "").lower():
-                                            st.warning("""
-                                            Rate limit exceeded. Try again with:
-                                            - Smaller chunk size
-                                            - Wait a few minutes before retrying
-                                            """)
-                                        break
-                                    else:
-                                        progress = status_data.get("progress", 0)
-                                        progress_bar.progress(40 + int(progress * 0.5))  # Scale to fit in our range
-                                        status_container.info(f"Processing: {status_data.get('status')} ({progress}%)")
-                                
-                                time.sleep(3)  # Wait between polls
-                    else:
-                        progress_bar.progress(100)
-                        status_text.text("Upload failed")
-                        
-                        if response:
-                            error_message = "Unknown error"
-                            try:
-                                error_data = response.json()
-                                error_message = error_data.get("error", "Unknown error")
-                            except:
-                                error_message = response.text
-                                
-                            st.error(f"Upload failed: {error_message}")
-                            
-                            # Special handling for rate limit errors
-                            if response.status_code == 429 or "rate limit" in error_message.lower():
-                                st.warning("""
-                                ⚠️ Rate limit exceeded. Please try:
-                                - Using optimized processing mode
-                                - Reducing chunk size
-                                - Waiting a few minutes before uploading again
-                                """)
+                        if response and response.status_code in [200, 202]:
+                            result = response.json()
+                            st.success(f"Document uploaded successfully! ID: {result.get('documentId')}")
+                            st.json(result)
                         else:
-                            st.error("Upload failed - server error")
+                            st.error(f"Error uploading document: {response.text if response else 'No response'}")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
     
-    # Tab 2: Document Library
-    with tabs[1]:
-        st.subheader("Document Library")
+    with doc_tabs[1]:  # Document Library
+        st.header("Document Library")
+        st.write("Browse and manage your uploaded documents")
         
-        col1, col2 = st.columns([3, 1])
+        # Add debug option
+        with st.expander("Debug ChromaDB Collections"):
+            if st.button("List All ChromaDB Collections"):
+                with st.spinner("Fetching all collections from ChromaDB..."):
+                    try:
+                        response = api_call("documents/listCollections", method="GET")
+                        if response and response.status_code == 200:
+                            st.json(response.json())
+                        else:
+                            st.error("Failed to retrieve collections")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
         
-        with col1:
-            st.write("Documents in your knowledge base")
-        
-        with col2:
-            # Add a check for mock data option
-            use_mock = st.checkbox("Use sample data", value=False, 
-                                  help="If checked, displays sample documents when ChromaDB is unavailable")
-        
-        # Button to refresh or load mock data
         if st.button("Refresh Document List"):
             with st.spinner("Fetching documents..."):
-                # Use mock list if selected, or if regular list fails
-                if use_mock:
-                    response = api_call("documents/mock-list", method="GET")
-                else:
+                try:
                     response = api_call("documents/list", method="GET")
                     
-                    # Fall back to mock data if real data fails
-                    if not response or response.status_code != 200:
-                        st.warning("Could not fetch real documents, showing sample data instead")
-                        response = api_call("documents/mock-list", method="GET")
-                
-                # Process the response
-                if response and response.status_code == 200:
-                    result = response.json()
-                    docs = result.get("documents", [])
-                    
-                    # Check if there's an error message in the response
-                    if "error" in result:
-                        st.warning(f"⚠️ Backend Warning: {result['error']}")
-                    
-                    if docs:
-                        # Create a table of documents
-                        docs_df = pd.DataFrame(
-                            [[doc.get("documentId", "Unknown"), 
-                              doc.get("metadata", {}).get("originalName", "Unknown"),
-                              doc.get("metadata", {}).get("uploadedAt", "Unknown"),
-                              doc.get("metadata", {}).get("source", "upload"),
-                              "✅" if doc.get("processed", False) else "⏳"] 
-                             for doc in docs],
-                            columns=["Document ID", "Filename", "Upload Date", "Source", "Status"]
-                        )
+                    if response and response.status_code == 200:
+                        result = response.json()
+                        docs = result.get("documents", [])
                         
-                        st.dataframe(docs_df, use_container_width=True)
+                        # Display debug information
+                        st.caption(f"Total collections: {result.get('collectionsCount', 0)}")
+                        st.caption(f"Document collections: {result.get('docCollectionsCount', 0)}")
                         
-                        # Show document count summary
-                        st.success(f"Found {len(docs)} documents in your collection")
-                        
-                        # Group documents by source
-                        sources = docs_df["Source"].value_counts().to_dict()
-                        source_text = ", ".join([f"{count} {source}" for source, count in sources.items()])
-                        st.write(f"Sources: {source_text}")
-                        
-                        # Allow selection of a document for details
-                        selected_doc = st.selectbox(
-                            "Select document to view details",
-                            options=docs_df["Document ID"].tolist(),
-                            format_func=lambda x: f"{x} - {docs_df[docs_df['Document ID']==x]['Filename'].values[0]}"
-                        )
-                        
-                        if selected_doc:
-                            doc_response = api_call(f"documents/{selected_doc}", method="GET")
-                            if doc_response and doc_response.status_code == 200:
-                                doc_details = doc_response.json()
+                        if not docs:
+                            st.info("No documents found in the library.")
+                            if result.get('message'):
+                                st.warning(result.get('message'))
+                        else:
+                            # Display documents in a table
+                            docs_data = []
+                            for doc in docs:
+                                metadata = doc.get("metadata", {})
+                                docs_data.append({
+                                    "ID": doc.get("documentId", "Unknown"),
+                                    "Name": metadata.get("originalName", "Unknown"),
+                                    "Uploaded": metadata.get("uploadedAt", "Unknown")[:10],
+                                    "Size": f"{int(metadata.get('fileSize', 0)/1024)} KB",
+                                    "Text Length": metadata.get("textLength", "Unknown")
+                                })
+                            
+                            st.dataframe(docs_data)
+                            
+                            # Add option to view document details
+                            if docs_data:
+                                doc_id = st.selectbox("Select a document to view details:", 
+                                                      [d["ID"] for d in docs_data])
                                 
-                                # Show document details
-                                st.subheader("Document Details")
-                                metadata = doc_details.get('metadata', {})
-                                if metadata:
-                                    for key, value in metadata.items():
-                                        st.write(f"**{key}:** {value}")
-                                
-                                # Add document preview/download options if available
-                                if "fileUrl" in doc_details:
-                                    st.markdown(f"[View Document]({doc_details['fileUrl']})")
-                                
-                                with st.expander("Raw Document Data"):
-                                    st.json(doc_details)
+                                if st.button("View Document Details"):
+                                    with st.spinner(f"Fetching document {doc_id}..."):
+                                        doc_response = api_call(f"documents/{doc_id}", method="GET")
+                                        if doc_response and doc_response.status_code == 200:
+                                            st.json(doc_response.json())
+                                        else:
+                                            st.error(f"Error fetching document: {doc_response.text if doc_response else 'No response'}")
                     else:
-                        st.info("No documents found in your ChromaDB collection.")
-                        
-                        # Add helpful guidance for new users
-                        st.markdown("""
-                        ### To add documents:
-                        1. **Upload a document** - Go to the 'Upload Document' tab and upload a PDF or DOCX file
-                        2. **Import from Google Drive** - Go to the 'Google Drive Integration' tab to import documents
-                        """)
-                else:
-                    status = response.status_code if response else "Unknown"
-                    st.error(f"Error: Failed to fetch documents. Status: {status}")
-                    
-                    # Try to extract more detailed error information
-                    try:
-                        error_details = response.json()
-                        st.json(error_details)
-                    except:
-                        st.error("Could not parse error response")
+                        st.error(f"Error fetching documents: {response.text if response else 'No response'}")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
     
-    # Tab 3: Google Drive Integration
-    with tabs[2]:
-        st.subheader("Google Drive Integration")
-        st.write("Process documents from Google Drive")
+    with doc_tabs[2]:  # Google Drive
+        st.header("Google Drive Integration")
+        st.write("Connect to Google Drive and import documents")
         
-        # Input for Google Drive folder ID
-        drive_folder_id = st.text_input(
-            "Google Drive Folder ID", 
-            help="Enter the ID of the Google Drive folder containing your documents"
-        )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("List Files") and drive_folder_id:
-                with st.spinner("Fetching files from Google Drive..."):
-                    response = api_call(f"drive-documents/list?folderId={drive_folder_id}", method="GET")
+        if st.button("List Drive Files"):
+            with st.spinner("Fetching files from Google Drive..."):
+                try:
+                    response = api_call("drive/list", method="GET")
                     
                     if response and response.status_code == 200:
                         files = response.json().get("files", [])
-                        if files:
-                            # Store files in session state for later use
-                            st.session_state.drive_files = files
-                            
-                            # Create a table of files
-                            files_df = pd.DataFrame(
-                                [[
-                                    file.get("name"),
-                                    file.get("id"),
-                                    file.get("mimeType"),
-                                    "✅" if file.get("processed") else "⏳" 
-                                ] for file in files],
-                                columns=["Filename", "ID", "Type", "Status"]
-                            )
-                            
-                            st.dataframe(files_df, use_container_width=True)
+                        
+                        if not files:
+                            st.info("No files found in Google Drive.")
                         else:
-                            st.info("No files found in the specified folder.")
-                    else:
-                        st.error("Failed to fetch files from Google Drive.")
-        
-        with col2:
-            if st.button("Process All Files") and drive_folder_id:
-                with st.spinner("Processing all files in folder..."):
-                    payload = {"folderId": drive_folder_id}
-                    response = api_call("drive-documents/process-folder", method="POST", data=payload)
-                    
-                    if response and response.status_code == 202:
-                        result = response.json()
-                        st.success(f"Processing started for {result.get('filesToProcess')} files.")
-                        
-                        # Show files that will be processed
-                        st.write("Files being processed:")
-                        for file in result.get("files", []):
-                            st.write(f"• {file.get('name')}")
+                            # Display files in a table
+                            file_data = []
+                            for file in files:
+                                file_data.append({
+                                    "ID": file.get("id", "Unknown"),
+                                    "Name": file.get("name", "Unknown"),
+                                    "Type": file.get("mimeType", "Unknown").split('/')[-1],
+                                    "Size": f"{int(file.get('size', 0)/1024)} KB" if file.get('size') else "N/A"
+                                })
                             
-                        st.info("This process runs in the background. Check the Document Library tab later to see the processed files.")
+                            st.dataframe(file_data)
+                            
+                            # Add option to import selected files
+                            file_to_import = st.selectbox("Select a file to import:", 
+                                                          [f"{f['Name']} ({f['ID']})" for f in file_data])
+                            
+                            if st.button("Import Selected File"):
+                                file_id = file_to_import.split("(")[-1].replace(")", "")
+                                with st.spinner(f"Importing file {file_id}..."):
+                                    import_response = api_call(f"drive/process/{file_id}", method="POST")
+                                    if import_response and import_response.status_code in [200, 202]:
+                                        st.success("File import started!")
+                                        st.json(import_response.json())
+                                    else:
+                                        st.error(f"Error importing file: {import_response.text if import_response else 'No response'}")
                     else:
-                        st.error("Failed to start folder processing.")
-        
-        # Individual file processing
-        if 'drive_files' in st.session_state and st.session_state.drive_files:
-            st.subheader("Process Individual Files")
-            
-            # Allow selection of a file to process
-            file_options = {f"{file['name']} ({file['id']})": file for file in st.session_state.drive_files}
-            selected_file_key = st.selectbox("Select a file to process", options=list(file_options.keys()))
-            
-            if selected_file_key and st.button("Process Selected File"):
-                selected_file = file_options[selected_file_key]
-                
-                with st.spinner(f"Processing file: {selected_file['name']}"):
-                    payload = {
-                        "fileId": selected_file["id"],
-                        "fileName": selected_file["name"],
-                        "folderId": drive_folder_id
-                    }
-                    
-                    response = api_call("drive-documents/process", method="POST", data=payload)
-                    
-                    if response and response.status_code in [200, 202]:
-                        result = response.json()
-                        if result.get("status") == "completed":
-                            st.success("File already processed successfully.")
-                        else:
-                            st.success("File processing started.")
-                            st.info("This process runs in the background. Check the Document Library tab later to see the processed file.")
-                    else:
-                        st.error("Failed to process the selected file.")
-    
-    # Tab 4: Query Documents
-    with tabs[3]:
-        st.subheader("Query Documents")
-        st.write("Search for information across your uploaded documents")
-        
-        # Query input
-        query = st.text_area("Enter your query", "What are the key challenges in the sales process?")
-        limit = st.slider("Number of results", 1, 10, 5)
-        
-        if st.button("Search Documents"):
-            with st.spinner("Searching documents..."):
-                payload = {
-                    "query": query,
-                    "limit": limit
-                }
-                
-                response = api_call("documents/query", method="POST", data=payload)
-                
-                if response and response.status_code == 200:
-                    result = response.json()
-                    
-                    # Handle potentially different response formats
-                    if 'results' in result and 'documents' in result['results']:
-                        documents = result['results']['documents'][0] if len(result['results']['documents']) > 0 else []
-                        metadatas = result['results']['metadatas'][0] if len(result['results']['metadatas']) > 0 else []
-                        
-                        st.success(f"Found {len(documents)} matching documents")
-                        
-                        for i, (doc, meta) in enumerate(zip(documents, metadatas)):
-                            with st.expander(f"Result {i+1}: {meta.get('originalName', 'Document')}"):
-                                st.markdown("**Document Excerpt:**")
-                                st.text(doc[:1000] + ("..." if len(doc) > 1000 else ""))
-                                
-                                st.markdown("**Metadata:**")
-                                st.json(meta)
-                    else:
-                        st.warning("Response format is different than expected")
-                        st.json(result)
-                else:
-                    status = response.status_code if response else "Unknown"
-                    st.error(f"Error: Failed to query documents. Status: {status}")
-    
-    # Tab 5: Generate Document-Based Strategy
-    with tabs[4]:
-        st.subheader("Generate Document-Based Sales Strategy")
-        st.write("Generate a sales strategy using insights from uploaded documents")
-        
-        # Input fields
-        col1, col2 = st.columns(2)
-        with col1:
-            document_id = st.text_input("Document ID", "")
-        with col2:
-            company_name = st.text_input("Company Name", "Google")
-        
-        # Advanced options
-        with st.expander("Advanced Options"):
-            timeout = st.slider("Request Timeout (seconds)", 30, 300, 120)
-        
-        if document_id and company_name and st.button("Generate Strategy"):
-            with st.spinner("Generating document-based sales strategy..."):
-                payload = {
-                    "documentId": document_id,
-                    "companyName": company_name
-                }
-                
-                response = api_call("documents/generateSalesStrategy", method="POST", data=payload, timeout=timeout)
-                
-                if response and response.status_code == 200:
-                    result = response.json()
-                    
-                    if 'errors' in result and (result.get('errors', {}).get('companyError') or 
-                                               result.get('errors', {}).get('documentError')):
-                        if result.get('errors', {}).get('companyError'):
-                            st.error(f"⚠️ Company data error: {result['errors']['companyError']}")
-                        if result.get('errors', {}).get('documentError'):
-                            st.warning(f"⚠️ Document search error: {result['errors']['documentError']}")
-                    
-                    st.success("Document-based sales strategy generated successfully!")
-                    
-                    # Display company info
-                    st.subheader("Company Information")
-                    company_info = result.get('companyInfo', {})
-                    if company_info:
-                        st.json(company_info)
-                    
-                    # Display sales strategy
-                    st.subheader("Sales Strategy")
-                    strategy = result.get('salesStrategy', "")
-                    st.markdown(strategy)
-                else:
-                    status = response.status_code if response else "Unknown"
-                    st.error(f"Error: Failed to generate strategy. Status: {status}")
+                        st.error(f"Error fetching Google Drive files: {response.text if response else 'No response'}")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
 
 # LinkedIn Profiles API
 elif selected_api == "LinkedIn Profiles":
@@ -827,6 +567,308 @@ elif selected_api == "LinkedIn Profiles":
                         st.json(response.json())
                     except:
                         st.error("Could not parse error response")
+
+# Sales Co-Pilot API
+elif selected_api == "Sales Co-Pilot":
+    st.title("Sales Co-Pilot")
+    st.write("Your AI-powered assistant for account-based selling")
+    
+    # Initialize session state variables
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    
+    if 'company' not in st.session_state:
+        st.session_state.company = ""
+        
+    if 'company_data' not in st.session_state:
+        st.session_state.company_data = None
+        
+    if 'user_id' not in st.session_state:
+        # Generate a random user ID if not exists
+        import uuid
+        st.session_state.user_id = str(uuid.uuid4())
+    
+    # Company selection section with added fields for location and role
+    with st.container():
+        col1, col2, col3 = st.columns([3, 2, 1])
+        
+        with col1:
+            company_input = st.text_input(
+                "Target Account Name",
+                value=st.session_state.company,
+                placeholder="Enter company name (e.g., Google, Microsoft)"
+            )
+        
+        with col2:
+            location_input = st.text_input(
+                "Location",
+                placeholder="e.g., United States, India"
+            )
+            
+            role_input = st.text_input(
+                "Target Role",
+                placeholder="e.g., CTO, Marketing Director"
+            )
+        
+        # Add user profile information
+        with st.expander("Your Profile & Offering"):
+            user_business_type = st.selectbox("Your Business Type", options=["Service", "Product"], key="copilot_business_type")
+            user_industry = st.text_input("Your Industry", key="copilot_industry")
+            user_role = st.text_input("Your Role", key="copilot_role")
+            user_company = st.text_input("Your Company", key="copilot_company")
+            user_location = st.text_input("Your Location", key="copilot_location")
+            user_product_description = st.text_area("Describe your product/service", key="copilot_product_desc")
+        
+        with col3:
+            if st.button("Set Company") and company_input:
+                with st.spinner(f"Gathering information about {company_input}..."):
+                    # First, get company data from the sales strategy API
+                    payload = {
+                        "companyName": company_input,
+                        "targetGeography": location_input if location_input else None,
+                        "role": role_input if role_input else None
+                    }
+                    
+                    # Remove None values
+                    payload = {k: v for k, v in payload.items() if v is not None}
+                    
+                    # Call the sales strategy API to get company information
+                    response = api_call("generateSalesStrategy", method="POST", data=payload, timeout=60)
+                    
+                    if response and response.status_code == 200:
+                        company_data = response.json()
+                        st.session_state.company_data = company_data
+                        st.session_state.company = company_input
+                        st.session_state.messages = []  # Clear chat when changing company
+                        st.success(f"Company set to: {company_input}")
+                    else:
+                        st.error("Failed to retrieve company information")
+                        st.session_state.company_data = None
+                        st.session_state.company = company_input
+                        
+                # Use experimental_rerun instead of rerun
+                st.experimental_rerun()
+    
+    # Display current company and company data
+    if st.session_state.company:
+        st.markdown(f"### Chatting about: **{st.session_state.company}**")
+        
+        # Display company information if available
+        if st.session_state.company_data:
+            with st.expander("Company Information"):
+                company_data = st.session_state.company_data
+                
+                # Display basic company info
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Industry", company_data.get("industry", "Unknown"))
+                with col2:
+                    st.metric("Business Type", company_data.get("businessType", "Unknown"))
+                with col3:
+                    st.metric("Location", company_data.get("headquarters", "Unknown"))
+                
+                # Display company products/services
+                st.subheader("Products & Services")
+                products = company_data.get("productOrServiceDetails", [])
+                if products:
+                    for product in products:
+                        st.markdown(f"• {product}")
+                
+                # Display pain points if available
+                if "salesStrategy" in company_data and "currentSituation" in company_data["salesStrategy"]:
+                    pain_points = company_data["salesStrategy"]["currentSituation"].get("painPointsAndMarketPressures", [])
+                    if pain_points:
+                        st.subheader("Pain Points")
+                        for point in pain_points:
+                            st.markdown(f"• {point}")
+        
+        # Optional: Add a button to clear conversation
+        if st.button("Clear Conversation"):
+            # Call API to clear conversation history
+            response = api_call(
+                "salesCoPilot/clearHistory", 
+                method="POST", 
+                data={
+                    "userId": st.session_state.user_id,
+                    "company": st.session_state.company
+                }
+            )
+            
+            if response and response.status_code == 200:
+                st.session_state.messages = []
+                st.success("Conversation cleared!")
+                # Use experimental_rerun instead of rerun
+                st.experimental_rerun()
+            else:
+                st.error("Failed to clear conversation history")
+        
+        # Display chat messages
+        chat_container = st.container()
+        with chat_container:
+            for message in st.session_state.messages:
+                if message["role"] == "user":
+                    st.chat_message("user").write(message["content"])
+                else:
+                    st.chat_message("assistant").write(message["content"])
+        
+        # Follow-up suggestions container
+        suggestion_container = st.container()
+        
+        # Input for new message
+        prompt = st.chat_input("Ask about " + st.session_state.company)
+        
+        # Debug Tools section
+        with st.expander("Debug Tools"):
+            st.subheader("Test ChromaDB Connectivity")
+            test_query = st.text_input("Test search query:", value=st.session_state.company)
+            
+            if st.button("Test ChromaDB Search"):
+                with st.spinner("Testing ChromaDB search..."):
+                    response = api_call(f"salesCoPilot/testChromaSearch?query={test_query}", timeout=30)
+                    
+                    if response and response.status_code == 200:
+                        result = response.json()
+                        st.json(result)
+                        
+                        if result.get("resultsFound"):
+                            st.success("✅ ChromaDB is working and returned results!")
+                        else:
+                            st.warning("⚠️ ChromaDB is working but no results found.")
+                            st.info("Collection details:")
+                            st.json(result.get("summary", {}).get("collections", []))
+                    else:
+                        st.error("❌ Error connecting to ChromaDB")
+                        if response:
+                            try:
+                                st.json(response.json())
+                            except:
+                                st.write(response.text)
+        
+        if prompt:
+            # Add user message to chat
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Display the user message
+            with chat_container:
+                st.chat_message("user").write(prompt)
+            
+            # Prepare company context from the sales strategy data
+            company_context = ""
+            if st.session_state.company_data:
+                company_data = st.session_state.company_data
+                company_context = f"""
+                Company: {company_data.get('companyName', st.session_state.company)}
+                Industry: {company_data.get("industry", "Unknown")}
+                Business Type: {company_data.get("businessType", "Unknown")}
+                Headquarters: {company_data.get("headquarters", "Unknown")}
+                Products/Services: {', '.join(company_data.get("productOrServiceDetails", []))}
+                """
+                
+                # Add pain points if available
+                if "salesStrategy" in company_data and "currentSituation" in company_data["salesStrategy"]:
+                    pain_points = company_data["salesStrategy"]["currentSituation"].get("painPointsAndMarketPressures", [])
+                    if pain_points:
+                        company_context += "Pain Points: " + ", ".join(pain_points)
+            
+            # Call the SalesCoPilot API with company context added
+            with st.spinner("Thinking..."):
+                payload = {
+                    "company": st.session_state.company,
+                    "query": prompt,
+                    "userId": st.session_state.user_id,
+                    "user_data": [company_context] if company_context else [],
+                    "userProfile": {
+                        "businessType": st.session_state.get("copilot_business_type", ""),
+                        "industry": st.session_state.get("copilot_industry", ""),
+                        "role": st.session_state.get("copilot_role", ""),
+                        "location": st.session_state.get("copilot_location", ""),
+                        "company": st.session_state.get("copilot_company", "")
+                    },
+                    "userContext": {
+                        "productDescription": st.session_state.get("copilot_product_desc", "")
+                    }
+                }
+                
+                response = api_call("salesCoPilot", method="POST", data=payload, timeout=60)
+                
+                if response and response.status_code == 200:
+                    result = response.json()
+                    
+                    # Extract the AI response
+                    ai_response = result.get("response", "Sorry, I couldn't process your request.")
+                    
+                    # Add assistant message to chat
+                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
+                    
+                    # Display the assistant message
+                    with chat_container:
+                        st.chat_message("assistant").write(ai_response)
+                    
+                    # Display follow-up questions as clickable buttons
+                    follow_up_questions = result.get("followUpQuestions", [])
+                    if follow_up_questions:
+                        with suggestion_container:
+                            st.markdown("##### Suggested follow-up questions:")
+                            cols = st.columns(len(follow_up_questions))
+                            
+                            for i, question in enumerate(follow_up_questions):
+                                with cols[i]:
+                                    if st.button(question, key=f"suggestion_{i}"):
+                                        # When clicked, set as the next input
+                                        st.session_state.next_question = question
+                                        # Use experimental_rerun instead of rerun
+                                        st.experimental_rerun()
+                    
+                    # Display any errors
+                    if "errors" in result and result.get("errors"):
+                        errors = result.get("errors", {})
+                        with st.expander("Request Processing Information"):
+                            if errors.get("companyError"):
+                                st.warning(f"Company data: {errors.get('companyError')}")
+                            if errors.get("documentError"):
+                                st.info(f"Document search: {errors.get('documentError')}")
+                else:
+                    status = response.status_code if response else "Unknown"
+                    error_msg = f"Error: Failed to get response. Status: {status}"
+                    
+                    # Add error message to chat
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    
+                    # Display the error message
+                    with chat_container:
+                        st.chat_message("assistant").write(error_msg)
+        
+        # Check if we have a question from a suggestion button
+        if "next_question" in st.session_state:
+            prompt = st.session_state.next_question
+            del st.session_state.next_question
+            
+            # Add user message to chat
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Display the user message
+            with chat_container:
+                st.chat_message("user").write(prompt)
+            
+            # Use experimental_rerun instead of rerun
+            st.experimental_rerun()
+    else:
+        # No company selected yet
+        st.info("👆 Enter a company name above to start your Sales Co-Pilot conversation.")
+        
+        with st.expander("About Sales Co-Pilot"):
+            st.markdown("""
+            ### What is Sales Co-Pilot?
+            
+            Sales Co-Pilot is your AI assistant for account-based selling. It helps you:
+            
+            - **Research target accounts** with accurate company information
+            - **Access your knowledge base** of uploaded documents
+            - **Generate insights** for your sales conversations
+            - **Prepare for meetings** with key stakeholders
+            
+            Simply enter a company name and start asking questions!
+            """)
 
 # System Status section
 with st.sidebar:

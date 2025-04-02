@@ -6,8 +6,14 @@ const aiService = require('../services/aiService');
  */
 const generateSalesStrategy = async (req, res) => {
   try {
-    // Extract parameters from request
+    // Extract target company parameters
     const { companyName, targetGeography, businessType, industry, role } = req.body;
+    
+    // Extract new user context parameters
+    const { 
+      userContext = {}, // New parameter for user's business context
+      userProfile = {} // New parameter for user's profile information
+    } = req.body;
     
     if (!companyName) {
       return res.status(400).json({
@@ -16,7 +22,7 @@ const generateSalesStrategy = async (req, res) => {
       });
     }
     
-    console.log(`🔍 Generating sales strategy for ${companyName}`);
+    console.log(`🔍 Generating sales strategy for ${companyName} for ${userProfile.name || 'user'}`);
     
     // Step 1: Search for organization details
     let organizationData = null;
@@ -59,7 +65,19 @@ const generateSalesStrategy = async (req, res) => {
       console.error(`❌ ${errorDetails.message}`);
     }
     
-    // Step 2: Prepare data for the AI service
+    // Step 2: Find common connections (if LinkedIn data is available)
+    let commonConnections = [];
+    try {
+      if (userProfile.name) {
+        const connections = await findCommonConnections(userProfile, companyName);
+        commonConnections = connections || [];
+        console.log(`✅ Found ${commonConnections.length} common connections`);
+      }
+    } catch (connectionError) {
+      console.error(`❌ Error finding common connections: ${connectionError.message}`);
+    }
+    
+    // Step 3: Prepare data for the AI service
     const companyProfile = {
       name: organizationData?.name || companyName,
       industry: organizationData?.industry || industry || "Technology",
@@ -71,11 +89,12 @@ const generateSalesStrategy = async (req, res) => {
       },
       products: organizationData?.products || [],
       description: organizationData?.description || `A company named ${companyName}`,
-      role: organizationData?.role || role || "Unknown"
+      role: organizationData?.role || role || "Unknown",
+      commonConnections: commonConnections
     };
     
-    // Step 3: Generate sales strategy using AI
-    const prompt = createSalesStrategyPrompt(companyProfile, errorDetails);
+    // Step 4: Generate sales strategy using AI with user context
+    const prompt = createSalesStrategyPrompt(companyProfile, errorDetails, userContext, userProfile);
     console.log("🧠 Sending data to AI service for strategy generation");
     
     let salesStrategy = null;
@@ -101,7 +120,7 @@ const generateSalesStrategy = async (req, res) => {
       });
     }
     
-    // Step 4: Return the complete response
+    // Step 5: Return the complete response
     return res.status(200).json({
       success: true,
       ...salesStrategy,
@@ -210,19 +229,79 @@ async function getOrganizationDetails(companyId) {
 }
 
 /**
+ * Find common connections between user and target company
+ */
+async function findCommonConnections(userProfile, companyName) {
+  try {
+    // Use Rapid API to find connections
+    const apiKey = process.env.RAPID_API_KEY;
+    const apiHost = process.env.RAPID_API_HOST;
+    
+    // Example implementation - replace with actual API call
+    const response = await axios({
+      method: 'GET',
+      url: `https://${apiHost}/search-organization-contacts`,
+      params: {
+        name: companyName,
+        page: 1
+      },
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': apiHost
+      }
+    });
+    
+    // Process connections data to find common history
+    const contacts = response.data?.contacts || [];
+    return contacts.filter(contact => {
+      // Check for common education or work history
+      return hasCommonBackground(userProfile, contact);
+    });
+  } catch (error) {
+    console.error(`Error finding common connections: ${error}`);
+    return [];
+  }
+}
+
+/**
+ * Check if user has common background with contact
+ */
+function hasCommonBackground(userProfile, contact) {
+  // Implement logic to check common education or work history
+  // This is a placeholder for the actual implementation
+  return false;
+}
+
+/**
  * Create the prompt for the AI service to generate a sales strategy
  */
-function createSalesStrategyPrompt(companyProfile, errorDetails) {
+function createSalesStrategyPrompt(companyProfile, errorDetails, userContext, userProfile) {
   return `
-    Generate a comprehensive sales strategy for ${companyProfile.name}.
+    Generate a comprehensive sales strategy for a ${userProfile.businessType || ''} business in the ${userProfile.industry || 'technology'} industry targeting ${companyProfile.name}.
     
-    COMPANY INFORMATION:
+    SALES REPRESENTATIVE PROFILE:
+    Name: ${userProfile.name || 'Sales Representative'}
+    Role: ${userProfile.role || 'Sales Professional'}
+    Company: ${userProfile.company || 'Our Company'}
+    Business Type: ${userProfile.businessType || 'Service/Product Provider'}
+    Industry Focus: ${userProfile.industry || 'Technology Solutions'}
+    Location: ${userProfile.location || 'Global'}
+    
+    YOUR PRODUCT/SERVICE OFFERING:
+    ${userContext.productDescription || 'A professional solution that helps organizations improve their operations and achieve their goals.'}
+    
+    TARGET COMPANY INFORMATION:
     ${JSON.stringify(companyProfile, null, 2)}
+    
+    ${companyProfile.commonConnections && companyProfile.commonConnections.length > 0 ? 
+      `COMMON CONNECTIONS:\n${companyProfile.commonConnections.map(c => `- ${c.name}, ${c.title} (Common: ${c.commonBackground})`).join('\n')}` : 
+      'No common connections found.'}
     
     ${errorDetails ? `NOTE: There was an issue retrieving complete company data: ${errorDetails.message}
     If you know information about this company, please include it in your response.` : ''}
     
-    Please generate a complete sales strategy in the following JSON format:
+    Please generate a complete sales strategy that specifically positions ${userProfile.company || 'our'} ${userProfile.businessType || ''} 
+    solutions for ${companyProfile.name} in the following JSON format:
     {
       "companyName": "${companyProfile.name}",
       "industry": "...",
@@ -247,6 +326,7 @@ function createSalesStrategyPrompt(companyProfile, errorDetails) {
           "benefits": ["...", "..."],
           "differentiation": "..."
         },
+        "relevanceToProspect": "Explain specifically how your ${userProfile.businessType || ''} solution addresses the target company's needs",
         "potentialObstaclesMitigation": {
           "obstacle1": {
             "description": "...",
@@ -258,18 +338,25 @@ function createSalesStrategyPrompt(companyProfile, errorDetails) {
           }
         },
         "engagementStrategy": ["...", "..."],
+        "keyDecisionMakers": [{
+          "role": "...",
+          "approachStrategy": "..."
+        }],
         "competitorAnalysis": [
           {
             "competitor": "Competitor Name",
+            "relevance": "Why this competitor is relevant (industry/size/location match)",
             "strengths": ["...", "..."],
             "weaknesses": ["...", "..."]
           }
         ],
-        "ccsScore": 85
+        "commonConnectionLeverage": "How to leverage any common connections or background"
       }
     }
     
-    Include a "ccsScore" (Customer Compatibility Score) between 0-100 that reflects how well this company would align with our services.
+    Make the sales strategy highly specific to selling ${userProfile.businessType || ''} solutions from the ${userProfile.industry || ''} industry to this specific company.
+    Focus on how your offering solves their particular problems and creates value for them.
+    Make the competitors relevant to their industry, market location, company size and revenue.
     
     DO NOT wrap the response in markdown code blocks.
     Return ONLY a valid JSON object.

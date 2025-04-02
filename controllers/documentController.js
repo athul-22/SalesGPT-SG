@@ -366,40 +366,93 @@ const getDocumentById = async (req, res) => {
 // List all documents
 const listDocuments = async (req, res) => {
   try {
-    // Get all collections
+    console.log("Listing all documents from ChromaDB...");
+    
+    // Get all collections from ChromaDB
     const collections = await chromaService.listAllCollections();
+    console.log(`Retrieved ${collections ? collections.length : 0} total collections`);
     
-    // Filter document collections
-    const docCollections = collections.filter(col => col.name.startsWith('doc_'));
+    // Log all collection names for debugging
+    if (collections && collections.length > 0) {
+      console.log("All collection names:", collections.map(c => c.name).join(", "));
+    }
     
+    // Defensive coding to handle null/undefined collections
+    if (!collections || !Array.isArray(collections)) {
+      return res.status(200).json({
+        success: true,
+        documents: [],
+        message: "No collections found in ChromaDB",
+        collectionsCount: 0
+      });
+    }
+    
+    // Filter for document collections (with enhanced null checks)
+    const docCollections = collections.filter(col => 
+      col && col.name && typeof col.name === 'string' && col.name.startsWith('doc_')
+    );
+    
+    console.log(`Found ${docCollections.length} document collections`);
+    
+    // If no document collections found, return empty array
+    if (docCollections.length === 0) {
+      return res.status(200).json({
+        success: true,
+        documents: [],
+        message: "No document collections found",
+        collectionsCount: collections.length
+      });
+    }
+    
+    // Fetch document information from each collection
     const documents = [];
     
-    // Get info for each collection
     for (const collection of docCollections) {
       try {
+        // Extract documentId from collection name
+        const documentId = collection.name.replace('doc_', '');
+        
+        // Get collection info to extract metadata
         const collectionInfo = await chromaService.getCollectionInfo(collection.name);
         
-        if (collectionInfo && collectionInfo.metadatas && collectionInfo.metadatas.length > 0) {
-          // Add only one entry per document (take the first metadata)
-          const metadata = collectionInfo.metadatas[0];
-          documents.push({
-            documentId: metadata.documentId,
-            collectionName: collection.name,
-            metadata,
-            processed: true,
-            count: collectionInfo.metadatas.length
-          });
-        }
+        // Use first item's metadata as document metadata
+        const metadata = collectionInfo && collectionInfo.metadatas && collectionInfo.metadatas.length > 0 
+          ? collectionInfo.metadatas[0] 
+          : {};
+        
+        // Build document object
+        documents.push({
+          documentId,
+          collectionName: collection.name,
+          metadata: {
+            ...metadata,
+            originalName: metadata.originalName || documentId,
+            uploadedAt: metadata.uploadedAt || new Date().toISOString(),
+            fileSize: metadata.fileSize || 0,
+            textLength: metadata.textLength || 0
+          }
+        });
+        
+        console.log(`✅ Added document: ${documentId}`);
       } catch (error) {
-        console.error(`Error getting info for collection ${collection.name}:`, error);
-        // Continue with next collection
+        console.error(`Error retrieving document from collection ${collection.name}:`, error.message);
+        // Continue to next collection rather than failing the whole request
       }
     }
     
-    res.status(200).json({ documents });
+    return res.status(200).json({
+      success: true,
+      documents,
+      collectionsCount: collections.length,
+      docCollectionsCount: docCollections.length
+    });
   } catch (error) {
-    console.error('Error listing documents:', error);
-    res.status(500).json({ error: 'Failed to list documents', details: error.message });
+    console.error("Error listing documents:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Error listing documents: ${error.message}`,
+      error: error.message
+    });
   }
 };
 
@@ -430,11 +483,53 @@ const getQueueStats = (req, res) => {
   });
 };
 
+// List all collections
+const listAllCollections = async (req, res) => {
+  try {
+    // Get all collections, with debugging
+    console.log("Listing all ChromaDB collections...");
+    const collections = await chromaService.listAllCollections();
+    
+    if (!collections || !Array.isArray(collections)) {
+      console.log("No collections found or unexpected response format");
+      return res.status(200).json({
+        success: true,
+        message: "No collections found or unexpected response format",
+        collections: [],
+        rawResponse: collections
+      });
+    }
+    
+    // Print out all collection names
+    const collectionNames = collections.map(c => c && c.name ? c.name : 'unnamed').filter(Boolean);
+    console.log(`Found ${collections.length} collections: ${collectionNames.join(', ')}`);
+    
+    // Return collection details
+    return res.status(200).json({
+      success: true,
+      collections: collections.map(c => ({ 
+        name: c.name,
+        metadata: c.metadata || {}
+      })),
+      count: collections.length,
+      docCollections: collections.filter(c => c && c.name && c.name.startsWith('doc_')).length
+    });
+  } catch (error) {
+    console.error("Error listing collections:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Error listing collections: ${error.message}`,
+      error: error.stack
+    });
+  }
+};
+
 module.exports = {
   uploadDocument,
   uploadSimpleDocument,
   getDocumentById,
   listDocuments,
   queryDocuments,
-  getQueueStats
+  getQueueStats,
+  listAllCollections
 };
