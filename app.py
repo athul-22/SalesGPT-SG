@@ -646,8 +646,8 @@ elif selected_api == "Sales Co-Pilot":
                         st.session_state.company_data = None
                         st.session_state.company = company_input
                         
-                # Use experimental_rerun instead of rerun
-                st.experimental_rerun()
+                # Use rerun instead of experimental_rerun
+                st.rerun()
     
     # Display current company and company data
     if st.session_state.company:
@@ -697,8 +697,8 @@ elif selected_api == "Sales Co-Pilot":
             if response and response.status_code == 200:
                 st.session_state.messages = []
                 st.success("Conversation cleared!")
-                # Use experimental_rerun instead of rerun
-                st.experimental_rerun()
+                # Use rerun instead of experimental_rerun
+                st.rerun()
             else:
                 st.error("Failed to clear conversation history")
         
@@ -816,8 +816,8 @@ elif selected_api == "Sales Co-Pilot":
                                     if st.button(question, key=f"suggestion_{i}"):
                                         # When clicked, set as the next input
                                         st.session_state.next_question = question
-                                        # Use experimental_rerun instead of rerun
-                                        st.experimental_rerun()
+                                        # Use rerun instead of experimental_rerun
+                                        st.rerun()
                     
                     # Display any errors
                     if "errors" in result and result.get("errors"):
@@ -850,8 +850,8 @@ elif selected_api == "Sales Co-Pilot":
             with chat_container:
                 st.chat_message("user").write(prompt)
             
-            # Use experimental_rerun instead of rerun
-            st.experimental_rerun()
+            # Use rerun instead of experimental_rerun
+            st.rerun()
     else:
         # No company selected yet
         st.info("👆 Enter a company name above to start your Sales Co-Pilot conversation.")
