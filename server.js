@@ -63,7 +63,7 @@ async function testChromaConnection() {
 testChromaConnection();
 
 // Start the server - ONLY ONCE
-const preferredPorts = [3003, 3002, 3001, 3000];
+const preferredPorts = [3000];
 startServer(preferredPorts);
 
 

@@ -19,7 +19,7 @@ if 'user_name' not in st.session_state:
     st.session_state.user_name = ""
 
 # Define the base URL for your API
-BASE_URL = "http://localhost:3002/api"
+BASE_URL = "13.201.83.141:3000/api"
 
 # Function to make API calls
 def api_call(endpoint, method="GET", data=None, files=None, timeout=60):
