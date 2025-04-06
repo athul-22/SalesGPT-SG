@@ -10,7 +10,6 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Apply CORS middleware before other middleware
 app.use(cors({
   origin: '*',  // For development. In production, specify allowed domains
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -24,19 +23,14 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api', mainRouter);
 
-// Simplified server start function that only uses port 3000
+// Fix the startServer function
 function startServer() {
   app.listen(port, () => {
     console.log(`✅ Server running on port ${port}`);
     console.log(`✅ For Streamlit app, set BASE_URL="http://localhost:${port}/api"`);
   }).on('error', (err) => {
-    if (err.code === 'EADDRINUSE' && ports.length > 0) {
-      server.close();
-      startServer(ports);
-    } else {
-      console.error('Error starting server:', err);
-      process.exit(1);
-    }
+    console.error('Error starting server:', err);
+    process.exit(1);
   });
 }
 
@@ -63,7 +57,6 @@ async function testChromaConnection() {
 testChromaConnection();
 
 // Start the server - ONLY ONCE
-const preferredPorts = [3000];
-startServer(preferredPorts);
+startServer();
 
 

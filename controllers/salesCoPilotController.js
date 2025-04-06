@@ -299,7 +299,83 @@ const clearConversationHistory = async (req, res) => {
   }
 };
 
+// Add this new function
+/**
+ * Get company information from multiple sources
+ */
+const getCompanyInfo = async (req, res) => {
+  try {
+    const { company, useExaAi = false, userId } = req.body;
+    
+    if (!company) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company name is required'
+      });
+    }
+    
+    // Get company info from primary source
+    let companyInfo = {};
+    let companyError = null;
+    
+    try {
+      // Try organization service first
+      const organizations = await organizationService.searchOrganizations(company);
+      if (Array.isArray(organizations) && organizations.length > 0) {
+        // Use best match
+        const targetCompany = organizations.find(org => 
+          org.name && company && org.name.toLowerCase() === company.toLowerCase()
+        ) || organizations[0];
+        
+        companyInfo = await organizationService.getOrganizationDetails(targetCompany.id);
+        console.log(`Found company information for: ${targetCompany.name}`);
+      } else {
+        companyError = `No company information found in primary source`;
+      }
+    } catch (error) {
+      companyError = `Error with primary data source: ${error.message}`;
+    }
+    
+    // If requested and primary source failed, try Exa.ai
+    let exaInfo = null;
+    let exaError = null;
+    
+    if (useExaAi && (Object.keys(companyInfo).length === 0 || companyError)) {
+      try {
+        // Import dynamically to avoid circular dependencies
+        const exaSearchService = require('../services/exaSearchService');
+        exaInfo = await exaSearchService.searchCompanyInfo(company);
+        console.log(`Found Exa.ai information for: ${company}`);
+      } catch (exaErr) {
+        exaError = `Error with Exa.ai: ${exaErr.message}`;
+      }
+    }
+    
+    return res.status(200).json({
+      success: true,
+      company,
+      primarySource: {
+        data: companyInfo,
+        error: companyError
+      },
+      exaSource: useExaAi ? {
+        data: exaInfo,
+        error: exaError
+      } : null
+    });
+  } catch (error) {
+    console.error('Error getting company info:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error processing request',
+      error: error.message
+    });
+  }
+};
+
+// Add to exports
 module.exports = {
   salesCoPilot,
-  clearConversationHistory
+  clearConversationHistory,
+  getCompanyInfo
 };

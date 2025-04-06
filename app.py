@@ -575,7 +575,7 @@ elif selected_api == "Sales Co-Pilot":
     
     # Initialize session state variables
     if 'messages' not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = {}  # Dict to store messages by company
     
     if 'company' not in st.session_state:
         st.session_state.company = ""
@@ -588,196 +588,201 @@ elif selected_api == "Sales Co-Pilot":
         import uuid
         st.session_state.user_id = str(uuid.uuid4())
     
-    # Company selection section with added fields for location and role
-    with st.container():
-        col1, col2, col3 = st.columns([3, 2, 1])
+    # Create a multi-column layout for input
+    st.write("### Target Company")
+    col1, col2, col3 = st.columns([3, 2, 2])
+    
+    with col1:
+        company_input = st.text_input(
+            "Company Name",
+            value=st.session_state.company,
+            placeholder="Enter company name (e.g., Google, Microsoft)"
+        )
+    
+    with col2:
+        location_input = st.text_input(
+            "Location",
+            placeholder="e.g., United States, India"
+        )
+    
+    with col3:
+        industry_input = st.text_input(
+            "Industry",
+            placeholder="e.g., Technology, Healthcare"
+        )
+    
+    # Add data source selector
+    col1, col2 = st.columns(2)
+    with col1:
+        use_exa = st.checkbox("Use Exa.ai for web search", value=True)
+    
+    with col2:
+        role_input = st.text_input(
+            "Target Role",
+            placeholder="e.g., CTO, Marketing Director"
+        )
+    
+    # User profile expandable section
+    with st.expander("Your Profile & Solution"):
+        user_profile_col1, user_profile_col2 = st.columns(2)
         
-        with col1:
-            company_input = st.text_input(
-                "Target Account Name",
-                value=st.session_state.company,
-                placeholder="Enter company name (e.g., Google, Microsoft)"
-            )
-        
-        with col2:
-            location_input = st.text_input(
-                "Location",
-                placeholder="e.g., United States, India"
-            )
-            
-            role_input = st.text_input(
-                "Target Role",
-                placeholder="e.g., CTO, Marketing Director"
-            )
-        
-        # Add user profile information
-        with st.expander("Your Profile & Offering"):
-            user_business_type = st.selectbox("Your Business Type", options=["Service", "Product"], key="copilot_business_type")
-            user_industry = st.text_input("Your Industry", key="copilot_industry")
-            user_role = st.text_input("Your Role", key="copilot_role")
+        with user_profile_col1:
+            user_name = st.text_input("Your Name", key="copilot_name")
             user_company = st.text_input("Your Company", key="copilot_company")
             user_location = st.text_input("Your Location", key="copilot_location")
-            user_product_description = st.text_area("Describe your product/service", key="copilot_product_desc")
         
-        with col3:
-            if st.button("Set Company") and company_input:
-                with st.spinner(f"Gathering information about {company_input}..."):
-                    # First, get company data from the sales strategy API
-                    payload = {
-                        "companyName": company_input,
-                        "targetGeography": location_input if location_input else None,
-                        "role": role_input if role_input else None
-                    }
-                    
-                    # Remove None values
-                    payload = {k: v for k, v in payload.items() if v is not None}
-                    
-                    # Call the sales strategy API to get company information
-                    response = api_call("generateSalesStrategy", method="POST", data=payload, timeout=60)
-                    
-                    if response and response.status_code == 200:
-                        company_data = response.json()
-                        st.session_state.company_data = company_data
-                        st.session_state.company = company_input
-                        st.session_state.messages = []  # Clear chat when changing company
-                        st.success(f"Company set to: {company_input}")
-                    else:
-                        st.error("Failed to retrieve company information")
-                        st.session_state.company_data = None
-                        st.session_state.company = company_input
-                        
-                # Use rerun instead of experimental_rerun
-                st.rerun()
+        with user_profile_col2:
+            user_role = st.text_input("Your Role", key="copilot_role")
+            user_business_type = st.selectbox("Business Type", options=["Service", "Product"], key="copilot_business_type")
+            user_industry = st.text_input("Your Industry", key="copilot_industry")
+        
+        user_product_description = st.text_area("Describe your product/service", key="copilot_product_desc")
     
-    # Display current company and company data
+    # Set Company button
+    if st.button("Set Company") and company_input:
+        with st.spinner(f"Gathering information about {company_input}..."):
+            # Get company information using new endpoint
+            payload = {
+                "company": company_input,
+                "useExaAi": use_exa,
+                "userId": st.session_state.user_id
+            }
+            
+            # Call the company info API
+            response = api_call("salesCoPilot/companyInfo", method="POST", data=payload, timeout=90)
+            
+            if response and response.status_code == 200:
+                result = response.json()
+                
+                # Set company data from primary source or Exa or combination
+                primary_data = result.get("primarySource", {}).get("data", {})
+                exa_data = result.get("exaSource", {}).get("data", {}) if result.get("exaSource") else {}
+                
+                # Combine data, preferring primary when available
+                combined_data = {**exa_data, **primary_data} if exa_data else primary_data
+                
+                # Only store if we got something
+                if combined_data and len(combined_data) > 0:
+                    st.session_state.company_data = combined_data
+                    st.success(f"✅ Found information about {company_input}")
+                else:
+                    st.warning(f"Limited information found for {company_input}")
+                    
+                # Initialize company chat if needed
+                st.session_state.company = company_input
+                if company_input not in st.session_state.messages:
+                    st.session_state.messages[company_input] = []
+                
+                # Use experimental_rerun instead of rerun
+                st.experimental_rerun()
+            else:
+                st.error("Error retrieving company information")
+    
+    # Display chat interface if company is selected
     if st.session_state.company:
-        st.markdown(f"### Chatting about: **{st.session_state.company}**")
+        company = st.session_state.company
         
-        # Display company information if available
+        # Show company info card
+        st.write(f"### Chatting about: {company}")
+        
         if st.session_state.company_data:
-            with st.expander("Company Information"):
+            with st.expander("Company Information", expanded=False):
                 company_data = st.session_state.company_data
                 
-                # Display basic company info
+                # Display company info in columns
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Industry", company_data.get("industry", "Unknown"))
                 with col2:
-                    st.metric("Business Type", company_data.get("businessType", "Unknown"))
+                    st.metric("Type", company_data.get("businessType", "Unknown"))
                 with col3:
                     st.metric("Location", company_data.get("headquarters", "Unknown"))
                 
-                # Display company products/services
-                st.subheader("Products & Services")
-                products = company_data.get("productOrServiceDetails", [])
-                if products:
-                    for product in products:
+                # Display products/services
+                if "productOrServiceDetails" in company_data and company_data["productOrServiceDetails"]:
+                    st.subheader("Products & Services")
+                    for product in company_data["productOrServiceDetails"]:
                         st.markdown(f"• {product}")
                 
-                # Display pain points if available
-                if "salesStrategy" in company_data and "currentSituation" in company_data["salesStrategy"]:
-                    pain_points = company_data["salesStrategy"]["currentSituation"].get("painPointsAndMarketPressures", [])
-                    if pain_points:
-                        st.subheader("Pain Points")
-                        for point in pain_points:
-                            st.markdown(f"• {point}")
+                # Display pain points
+                if "painPoints" in company_data and company_data["painPoints"]:
+                    st.subheader("Pain Points")
+                    for point in company_data["painPoints"]:
+                        st.markdown(f"• {point}")
         
-        # Optional: Add a button to clear conversation
+        # Clear conversation button
         if st.button("Clear Conversation"):
-            # Call API to clear conversation history
-            response = api_call(
-                "salesCoPilot/clearHistory", 
-                method="POST", 
-                data={
-                    "userId": st.session_state.user_id,
-                    "company": st.session_state.company
-                }
-            )
-            
-            if response and response.status_code == 200:
-                st.session_state.messages = []
+            if company in st.session_state.messages:
+                st.session_state.messages[company] = []
+                
+                # Also clear on server
+                api_call(
+                    "salesCoPilot/clearHistory", 
+                    method="POST", 
+                    data={
+                        "userId": st.session_state.user_id,
+                        "company": company
+                    }
+                )
+                
                 st.success("Conversation cleared!")
-                # Use rerun instead of experimental_rerun
-                st.rerun()
-            else:
-                st.error("Failed to clear conversation history")
+                st.experimental_rerun()
         
         # Display chat messages
         chat_container = st.container()
         with chat_container:
-            for message in st.session_state.messages:
-                if message["role"] == "user":
-                    st.chat_message("user").write(message["content"])
-                else:
-                    st.chat_message("assistant").write(message["content"])
+            if company in st.session_state.messages:
+                for message in st.session_state.messages[company]:
+                    if message["role"] == "user":
+                        st.chat_message("user").write(message["content"])
+                    else:
+                        st.chat_message("assistant").write(message["content"])
         
-        # Follow-up suggestions container
+        # Follow-up container
         suggestion_container = st.container()
         
-        # Input for new message
-        prompt = st.chat_input("Ask about " + st.session_state.company)
-        
-        # Debug Tools section
-        with st.expander("Debug Tools"):
-            st.subheader("Test ChromaDB Connectivity")
-            test_query = st.text_input("Test search query:", value=st.session_state.company)
-            
-            if st.button("Test ChromaDB Search"):
-                with st.spinner("Testing ChromaDB search..."):
-                    response = api_call(f"salesCoPilot/testChromaSearch?query={test_query}", timeout=30)
-                    
-                    if response and response.status_code == 200:
-                        result = response.json()
-                        st.json(result)
-                        
-                        if result.get("resultsFound"):
-                            st.success("✅ ChromaDB is working and returned results!")
-                        else:
-                            st.warning("⚠️ ChromaDB is working but no results found.")
-                            st.info("Collection details:")
-                            st.json(result.get("summary", {}).get("collections", []))
-                    else:
-                        st.error("❌ Error connecting to ChromaDB")
-                        if response:
-                            try:
-                                st.json(response.json())
-                            except:
-                                st.write(response.text)
+        # Chat input
+        prompt = st.chat_input(f"Ask about {company}...")
         
         if prompt:
-            # Add user message to chat
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            # Add to session
+            if company not in st.session_state.messages:
+                st.session_state.messages[company] = []
+                
+            st.session_state.messages[company].append({"role": "user", "content": prompt})
             
-            # Display the user message
+            # Show in chat
             with chat_container:
                 st.chat_message("user").write(prompt)
             
-            # Prepare company context from the sales strategy data
+            # Prepare context from company data
             company_context = ""
             if st.session_state.company_data:
-                company_data = st.session_state.company_data
+                data = st.session_state.company_data
                 company_context = f"""
-                Company: {company_data.get('companyName', st.session_state.company)}
-                Industry: {company_data.get("industry", "Unknown")}
-                Business Type: {company_data.get("businessType", "Unknown")}
-                Headquarters: {company_data.get("headquarters", "Unknown")}
-                Products/Services: {', '.join(company_data.get("productOrServiceDetails", []))}
+                Company: {company}
+                Industry: {data.get('industry', 'Unknown')}
+                Business Type: {data.get('businessType', 'Unknown')}
+                Location: {data.get('headquarters', 'Unknown')}
                 """
                 
-                # Add pain points if available
-                if "salesStrategy" in company_data and "currentSituation" in company_data["salesStrategy"]:
-                    pain_points = company_data["salesStrategy"]["currentSituation"].get("painPointsAndMarketPressures", [])
-                    if pain_points:
-                        company_context += "Pain Points: " + ", ".join(pain_points)
+                if "productOrServiceDetails" in data:
+                    products = ", ".join(data["productOrServiceDetails"][:5])
+                    company_context += f"Products/Services: {products}\n"
+                
+                if "painPoints" in data:
+                    pain_points = ", ".join(data["painPoints"][:5])
+                    company_context += f"Pain Points: {pain_points}\n"
             
-            # Call the SalesCoPilot API with company context added
+            # Call API
             with st.spinner("Thinking..."):
                 payload = {
-                    "company": st.session_state.company,
+                    "company": company,
                     "query": prompt,
                     "userId": st.session_state.user_id,
                     "user_data": [company_context] if company_context else [],
                     "userProfile": {
+                        "name": st.session_state.get("copilot_name", ""),
                         "businessType": st.session_state.get("copilot_business_type", ""),
                         "industry": st.session_state.get("copilot_industry", ""),
                         "role": st.session_state.get("copilot_role", ""),
@@ -793,18 +798,14 @@ elif selected_api == "Sales Co-Pilot":
                 
                 if response and response.status_code == 200:
                     result = response.json()
+                    ai_response = result.get("response", "I couldn't process your request.")
                     
-                    # Extract the AI response
-                    ai_response = result.get("response", "Sorry, I couldn't process your request.")
-                    
-                    # Add assistant message to chat
-                    st.session_state.messages.append({"role": "assistant", "content": ai_response})
-                    
-                    # Display the assistant message
+                    # Add to session and display
+                    st.session_state.messages[company].append({"role": "assistant", "content": ai_response})
                     with chat_container:
                         st.chat_message("assistant").write(ai_response)
                     
-                    # Display follow-up questions as clickable buttons
+                    # Show follow-up questions
                     follow_up_questions = result.get("followUpQuestions", [])
                     if follow_up_questions:
                         with suggestion_container:
@@ -813,62 +814,14 @@ elif selected_api == "Sales Co-Pilot":
                             
                             for i, question in enumerate(follow_up_questions):
                                 with cols[i]:
-                                    if st.button(question, key=f"suggestion_{i}"):
-                                        # When clicked, set as the next input
+                                    if st.button(question, key=f"suggestion_{i}_{company}"):
                                         st.session_state.next_question = question
-                                        # Use rerun instead of experimental_rerun
-                                        st.rerun()
-                    
-                    # Display any errors
-                    if "errors" in result and result.get("errors"):
-                        errors = result.get("errors", {})
-                        with st.expander("Request Processing Information"):
-                            if errors.get("companyError"):
-                                st.warning(f"Company data: {errors.get('companyError')}")
-                            if errors.get("documentError"):
-                                st.info(f"Document search: {errors.get('documentError')}")
+                                        st.experimental_rerun()
                 else:
-                    status = response.status_code if response else "Unknown"
-                    error_msg = f"Error: Failed to get response. Status: {status}"
-                    
-                    # Add error message to chat
-                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                    
-                    # Display the error message
+                    error_msg = "Sorry, I encountered an error processing your request."
+                    st.session_state.messages[company].append({"role": "assistant", "content": error_msg})
                     with chat_container:
                         st.chat_message("assistant").write(error_msg)
-        
-        # Check if we have a question from a suggestion button
-        if "next_question" in st.session_state:
-            prompt = st.session_state.next_question
-            del st.session_state.next_question
-            
-            # Add user message to chat
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            
-            # Display the user message
-            with chat_container:
-                st.chat_message("user").write(prompt)
-            
-            # Use rerun instead of experimental_rerun
-            st.rerun()
-    else:
-        # No company selected yet
-        st.info("👆 Enter a company name above to start your Sales Co-Pilot conversation.")
-        
-        with st.expander("About Sales Co-Pilot"):
-            st.markdown("""
-            ### What is Sales Co-Pilot?
-            
-            Sales Co-Pilot is your AI assistant for account-based selling. It helps you:
-            
-            - **Research target accounts** with accurate company information
-            - **Access your knowledge base** of uploaded documents
-            - **Generate insights** for your sales conversations
-            - **Prepare for meetings** with key stakeholders
-            
-            Simply enter a company name and start asking questions!
-            """)
 
 # System Status section
 with st.sidebar:
