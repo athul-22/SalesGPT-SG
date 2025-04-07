@@ -674,7 +674,7 @@ elif selected_api == "Sales Co-Pilot":
                     st.session_state.messages[company_input] = []
                 
                 # Use experimental_rerun instead of rerun
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Error retrieving company information")
     
@@ -726,7 +726,7 @@ elif selected_api == "Sales Co-Pilot":
                 )
                 
                 st.success("Conversation cleared!")
-                st.experimental_rerun()
+                st.rerun()
         
         # Display chat messages
         chat_container = st.container()
@@ -816,7 +816,7 @@ elif selected_api == "Sales Co-Pilot":
                                 with cols[i]:
                                     if st.button(question, key=f"suggestion_{i}_{company}"):
                                         st.session_state.next_question = question
-                                        st.experimental_rerun()
+                                        st.rerun()
                 else:
                     error_msg = "Sorry, I encountered an error processing your request."
                     st.session_state.messages[company].append({"role": "assistant", "content": error_msg})
