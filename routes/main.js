@@ -2,7 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { generateSalesStrategy } = require('../controllers/salesStrategy');
 const { generateExaSalesStrategy } = require('../controllers/exaSalesStrategy');
-const { salesCoPilot, clearConversationHistory, getCompanyInfo } = require('../controllers/salesCoPilotController');
+const { 
+  salesCoPilot, 
+  clearConversationHistory, 
+  getCompanyInfo, 
+  getStrategicSalesInsights 
+} = require('../controllers/salesCoPilotController');
 const documentsRouter = require('./documents');
 const driveDocumentsRouter = require('./driveDocuments');
 const linkedinController = require('../controllers/linkedinProfiles');
@@ -20,6 +25,7 @@ router.post('/generateExaSalesStrategy', generateExaSalesStrategy);
 router.post('/salesCoPilot', salesCoPilot);
 router.post('/salesCoPilot/clearHistory', clearConversationHistory);
 router.post('/salesCoPilot/companyInfo', getCompanyInfo);
+router.post('/salesCoPilot/strategicInsights', getStrategicSalesInsights);
 
 // Other routes
 router.use('/documents', documentsRouter);

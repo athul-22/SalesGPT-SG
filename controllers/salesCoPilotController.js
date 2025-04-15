@@ -299,10 +299,7 @@ const clearConversationHistory = async (req, res) => {
   }
 };
 
-// Add this new function
-/**
- * Get company information from multiple sources
- */
+
 const getCompanyInfo = async (req, res) => {
   try {
     const { company, useExaAi = false, userId } = req.body;
@@ -373,9 +370,421 @@ const getCompanyInfo = async (req, res) => {
   }
 };
 
-// Add to exports
+const getStrategicSalesInsights = async (req, res) => {
+  try {
+    const { 
+      company, 
+      userId, 
+      sellerProfile = {}, 
+      sellerOfferings = [] 
+    } = req.body;
+    
+    if (!company) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company name is required'
+      });
+    }
+    
+    // Get comprehensive company information
+    const companyData = await getEnhancedCompanyData(company);
+    
+    // Get key executives from LinkedIn
+    const executives = await getKeyExecutives(company);
+    
+    // Generate strategic insights
+    const strategicInsights = await generateStrategicInsights(
+      companyData, 
+      executives, 
+      sellerProfile, 
+      sellerOfferings
+    );
+    
+    return res.status(200).json({
+      success: true,
+      company,
+      insights: strategicInsights,
+      companyData: {
+        summary: companyData.summary,
+        executiveCount: executives.length
+      }
+    });
+  } catch (error) {
+    console.error('Error generating strategic sales insights:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error processing strategic sales insights',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Gets enhanced company data from multiple sources
+ */
+async function getEnhancedCompanyData(company) {
+  // Get primary company information from organization service
+  let companyData = { summary: {}, technologies: [], locations: [], trends: [] };
+  
+  try {
+    const organizations = await organizationService.searchOrganizations(company);
+    if (Array.isArray(organizations) && organizations.length > 0) {
+      // Find best match
+      const targetCompany = organizations.find(org => 
+        org.name && company && org.name.toLowerCase() === company.toLowerCase()
+      ) || organizations[0];
+      
+      // Get detailed company information
+      const details = await organizationService.getOrganizationDetails(targetCompany.id);
+      companyData.summary = details;
+      
+      // Extract technologies if available
+      if (details.technologies) {
+        companyData.technologies = details.technologies;
+      }
+      
+      // Extract locations if available
+      if (details.locations) {
+        companyData.locations = details.locations;
+      }
+      
+      // Extract recent news or announcements
+      if (details.recent_news) {
+        companyData.recentNews = details.recent_news;
+      }
+      
+      // Extract hiring trends
+      if (details.job_postings) {
+        companyData.jobPostings = details.job_postings;
+      }
+    }
+  } catch (error) {
+    console.error(`Error fetching organization data: ${error.message}`);
+  }
+  
+  // Enhance with industry trends via AI analysis
+  try {
+    const aiService = require('../services/aiService');
+    const prompt = `
+      Based on recent industry data, what are the top 5 strategic priorities and trends
+      for companies in the ${companyData.summary.industry || company} sector?
+      Format the response as JSON with fields: 
+      { "trends": [{"name": "trend name", "description": "brief explanation"}] }
+    `;
+    
+    const trendAnalysis = await aiService.generateContent(prompt);
+    try {
+      const parsedTrends = JSON.parse(trendAnalysis.replace(/```json|```/g, '').trim());
+      companyData.industryTrends = parsedTrends.trends;
+    } catch (parseError) {
+      console.error('Error parsing AI trend analysis:', parseError);
+    }
+  } catch (aiError) {
+    console.error(`Error generating industry trends: ${aiError.message}`);
+  }
+  
+  return companyData;
+}
+
+/**
+ * Gets key executives from LinkedIn using Exa service
+ */
+async function getKeyExecutives(company) {
+  try {
+    const exaService = require('../services/exaService');
+    
+    // Search for C-level executives
+    const cLevelProfiles = await exaService.searchLinkedInProfiles(
+      company, 
+      'CEO OR CTO OR CMO OR CIO', 
+      '', // Location left blank for broader search
+      5,  // Limit to 5 executives
+      'technology OR strategy' // Focus on technology leaders
+    );
+    
+    return cLevelProfiles || [];
+  } catch (error) {
+    console.error(`Error fetching LinkedIn profiles: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Generate strategic insights for sales alignment
+ */
+async function generateStrategicInsights(companyData, executives, sellerProfile, sellerOfferings) {
+  const insights = {
+    commonBackgrounds: [],
+    executiveStrategicPriorities: [],
+    technologyStackMatches: [],
+    geographicOpportunities: [],
+    hiringPatternMatches: [],
+    industryTrendAlignment: []
+  };
+  
+  // 1. Identify common backgrounds
+  if (executives.length > 0 && sellerProfile) {
+    insights.commonBackgrounds = await findCommonBackgrounds(executives, sellerProfile);
+  }
+  
+  // 2. Match executive priorities with seller offerings
+  if (companyData.recentNews && sellerOfferings.length > 0) {
+    insights.executiveStrategicPriorities = await matchExecutivePriorities(
+      companyData.recentNews, 
+      sellerOfferings
+    );
+  }
+  
+  // 3. Detect technology stack matches
+  if (companyData.technologies && sellerOfferings.length > 0) {
+    insights.technologyStackMatches = matchTechnologyStack(
+      companyData.technologies, 
+      sellerOfferings
+    );
+  }
+  
+  // 4. Identify geographic opportunities
+  if (companyData.locations && sellerProfile.regions) {
+    insights.geographicOpportunities = identifyGeographicOpportunities(
+      companyData.locations, 
+      sellerProfile.regions
+    );
+  }
+  
+  // 5. Analyze hiring patterns
+  if (companyData.jobPostings && sellerOfferings.length > 0) {
+    insights.hiringPatternMatches = analyzeHiringPatterns(
+      companyData.jobPostings, 
+      sellerOfferings
+    );
+  }
+  
+  // 6. Align industry trends with offerings
+  if (companyData.industryTrends && sellerOfferings.length > 0) {
+    insights.industryTrendAlignment = alignIndustryTrends(
+      companyData.industryTrends, 
+      sellerOfferings
+    );
+  }
+  
+  return insights;
+}
+
+/**
+ * Find common backgrounds between executives and seller
+ */
+async function findCommonBackgrounds(executives, sellerProfile) {
+  const commonConnections = [];
+  
+  for (const executive of executives) {
+    const commonPoints = {
+      executiveName: executive.name,
+      executivePosition: executive.designation,
+      commonFactors: []
+    };
+    
+    // Check for common education
+    if (sellerProfile.education && executive.snippet) {
+      for (const school of sellerProfile.education) {
+        if (executive.snippet.toLowerCase().includes(school.toLowerCase())) {
+          commonPoints.commonFactors.push({
+            type: 'education',
+            detail: `Both attended ${school}`
+          });
+        }
+      }
+    }
+    
+    // Check for common previous employers
+    if (sellerProfile.previousEmployers && executive.snippet) {
+      for (const employer of sellerProfile.previousEmployers) {
+        if (executive.snippet.toLowerCase().includes(employer.toLowerCase())) {
+          commonPoints.commonFactors.push({
+            type: 'previous_employer',
+            detail: `Both worked at ${employer}`
+          });
+        }
+      }
+    }
+    
+    // Check for common locations
+    if (sellerProfile.locations && executive.location) {
+      for (const location of sellerProfile.locations) {
+        if (executive.location.toLowerCase().includes(location.toLowerCase())) {
+          commonPoints.commonFactors.push({
+            type: 'location',
+            detail: `Both have connection to ${location}`
+          });
+        }
+      }
+    }
+    
+    if (commonPoints.commonFactors.length > 0) {
+      commonConnections.push(commonPoints);
+    }
+  }
+  
+  return commonConnections;
+}
+
+/**
+ * Match executive priorities with seller offerings using AI analysis
+ */
+async function matchExecutivePriorities(recentNews, sellerOfferings) {
+  try {
+    const aiService = require('../services/aiService');
+    
+    const prompt = `
+      Analyze the following recent company news and statements:
+      ${JSON.stringify(recentNews)}
+      
+      Extract any strategic priorities or initiatives mentioned by executives.
+      Then determine if any of these priorities align with the following offerings:
+      ${JSON.stringify(sellerOfferings)}
+      
+      Format the response as JSON with fields:
+      {
+        "alignments": [
+          {
+            "priority": "Executive stated priority",
+            "offering": "Matching seller offering",
+            "alignmentStrength": "high|medium|low",
+            "reason": "Brief explanation of why they align"
+          }
+        ]
+      }
+    `;
+    
+    const analysis = await aiService.generateContent(prompt);
+    try {
+      const parsedAnalysis = JSON.parse(analysis.replace(/```json|```/g, '').trim());
+      return parsedAnalysis.alignments;
+    } catch (parseError) {
+      console.error('Error parsing AI executive priorities analysis:', parseError);
+      return [];
+    }
+  } catch (error) {
+    console.error(`Error analyzing executive priorities: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Match technology stack with seller offerings
+ */
+function matchTechnologyStack(technologies, sellerOfferings) {
+  const matches = [];
+  
+  for (const tech of technologies) {
+    for (const offering of sellerOfferings) {
+      // Convert both to lowercase for case-insensitive matching
+      const techLower = typeof tech === 'string' ? tech.toLowerCase() : 
+                         tech.name ? tech.name.toLowerCase() : '';
+      const offeringLower = offering.toLowerCase();
+      
+      // Check for direct matches or related technology matches
+      if (techLower.includes(offeringLower) || offeringLower.includes(techLower)) {
+        matches.push({
+          technology: typeof tech === 'string' ? tech : tech.name,
+          offering: offering,
+          matchType: 'direct'
+        });
+      }
+    }
+  }
+  
+  return matches;
+}
+
+/**
+ * Identify geographic expansion opportunities
+ */
+function identifyGeographicOpportunities(companyLocations, sellerRegions) {
+  const opportunities = [];
+  
+  for (const companyLoc of companyLocations) {
+    for (const sellerRegion of sellerRegions) {
+      if (typeof companyLoc === 'string' && companyLoc.toLowerCase().includes(sellerRegion.toLowerCase()) ||
+          typeof companyLoc === 'object' && companyLoc.name && companyLoc.name.toLowerCase().includes(sellerRegion.toLowerCase())) {
+        
+        const locationName = typeof companyLoc === 'string' ? companyLoc : companyLoc.name;
+        
+        opportunities.push({
+          location: locationName,
+          sellerRegion: sellerRegion,
+          opportunity: `Seller has presence in ${sellerRegion} where company operates`
+        });
+      }
+    }
+  }
+  
+  return opportunities;
+}
+
+/**
+ * Analyze hiring patterns for matches with seller offerings
+ */
+function analyzeHiringPatterns(jobPostings, sellerOfferings) {
+  const matches = [];
+  
+  for (const job of jobPostings) {
+    const jobTitle = job.title || '';
+    const jobDescription = job.description || '';
+    
+    for (const offering of sellerOfferings) {
+      // Convert to lowercase for case-insensitive matching
+      const offeringLower = offering.toLowerCase();
+      const titleLower = jobTitle.toLowerCase();
+      const descriptionLower = jobDescription.toLowerCase();
+      
+      if (titleLower.includes(offeringLower) || descriptionLower.includes(offeringLower)) {
+        matches.push({
+          jobTitle: jobTitle,
+          offering: offering,
+          reason: titleLower.includes(offeringLower) ? 
+            'Job title directly relates to seller offering' : 
+            'Job description mentions technology/service related to seller offering'
+        });
+      }
+    }
+  }
+  
+  return matches;
+}
+
+/**
+ * Align industry trends with seller offerings
+ */
+function alignIndustryTrends(industryTrends, sellerOfferings) {
+  const alignments = [];
+  
+  for (const trend of industryTrends) {
+    const trendName = trend.name || '';
+    const trendDescription = trend.description || '';
+    
+    for (const offering of sellerOfferings) {
+      // Convert to lowercase for case-insensitive matching
+      const offeringLower = offering.toLowerCase();
+      const trendNameLower = trendName.toLowerCase();
+      const trendDescriptionLower = trendDescription.toLowerCase();
+      
+      if (trendNameLower.includes(offeringLower) || trendDescriptionLower.includes(offeringLower) || 
+          offeringLower.includes(trendNameLower)) {
+        alignments.push({
+          trend: trendName,
+          offering: offering,
+          alignment: 'Seller offering aligns with industry trend'
+        });
+      }
+    }
+  }
+  
+  return alignments;
+}
+
 module.exports = {
   salesCoPilot,
   clearConversationHistory,
-  getCompanyInfo
+  getCompanyInfo,
+  getStrategicSalesInsights
 };

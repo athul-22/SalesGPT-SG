@@ -458,7 +458,6 @@ async function queryAllDocumentCollections(queryText, limit = 5) {
   }
 }
 
-// Add this to salesCoPilotController.js 
 const testChromaSearch = async (req, res) => {
   try {
     const { query = "test query" } = req.query;
