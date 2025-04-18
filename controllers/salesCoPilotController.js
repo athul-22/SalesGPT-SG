@@ -2,15 +2,28 @@ const organizationService = require('../services/organizationService');
 const aiService = require('../services/aiService');
 const chromaService = require('../services/chromaService');
 
-// In-memory conversation history store - for production, use a database
+// In-memory stores for conversations and company data
 const conversationStore = {};
+const companyDataStore = {}; 
+const lastActivity = {}; 
 
 /**
- * Sales Co-Pilot API that enables conversational interaction about target companies
+ * Enhanced Sales Co-Pilot API that enables conversational interaction about target companies
+ * with comprehensive data handling and knowledge base integration
  */
 const salesCoPilot = async (req, res) => {
   try {
-    const { company, query, userId, user_data = [], userProfile = {}, userContext = {} } = req.body;
+    const { 
+      company, 
+      query, 
+      userId, 
+      user_data = [], 
+      userProfile = {}, 
+      userContext = {},
+      companyData = null,
+      conversationHistory = null, 
+      forceRefresh = false
+    } = req.body;
 
     // Validation
     if (!company || !query || !userId) {
@@ -20,161 +33,213 @@ const salesCoPilot = async (req, res) => {
       });
     }
 
-    console.log(`Processing Sales Co-Pilot request for company: ${company}`);
-    console.log(`User query: "${query}"`);
+    console.log(`\n===== SALES CO-PILOT REQUEST =====`);
+    console.log(`👤 User: ${userId}`);
+    console.log(`🏢 Company: ${company}`);
+    console.log(`💬 Query: ${query}`);
+    console.log(`📊 Has companyData: ${companyData ? 'Yes' : 'No'}`);
+    console.log(`👱 Has userProfile: ${Object.keys(userProfile).length > 0 ? 'Yes' : 'No'}`);
+    
+    // Update last activity timestamp for this user
+    lastActivity[userId] = Date.now();
 
-    // Initialize or retrieve conversation history
+    // Initialize stores for this user if needed
     if (!conversationStore[userId]) {
       conversationStore[userId] = {};
     }
     
+    if (!companyDataStore[userId]) {
+      companyDataStore[userId] = {};
+    }
+    
+    // Initialize conversation history for this company
     if (!conversationStore[userId][company]) {
       conversationStore[userId][company] = [];
     }
     
-    const conversationHistory = conversationStore[userId][company];
-
-    // Get company information
+    // If client provided conversation history, use it instead of server-stored history
+    if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+      console.log(`📝 Using client-provided conversation history (${conversationHistory.length} entries)`);
+      conversationStore[userId][company] = conversationHistory;
+    }
+    
+    // Handle company data - either from the request or from storage
     let companyInfo = {};
     let companyError = null;
-    try {
-      const organizations = await organizationService.searchOrganizations(company);
-      if (Array.isArray(organizations) && organizations.length > 0) {
-        // Find the best match for the company
-        const targetCompany = organizations.find(org => 
-          org.name && company && org.name.toLowerCase() === company.toLowerCase()
-        ) || organizations[0];
-        
-        // Get detailed information
-        companyInfo = await organizationService.getOrganizationDetails(targetCompany.id);
-        console.log(`Found company information for: ${targetCompany.name}`);
-      } else {
-        companyError = `No company information found for: ${company}`;
-        console.log(companyError);
-      }
-    } catch (error) {
-      companyError = `Error fetching company information: ${error.message || error}`;
-      console.error(companyError);
+    
+    // If company data is provided in this request, use and store it
+    if (companyData && Object.keys(companyData).length > 0) {
+      companyDataStore[userId][company] = companyData;
+      companyInfo = companyData;
+      console.log(`📋 Using and storing new company data (${Object.keys(companyData).length} fields)`);
+    } 
+    // Otherwise use previously stored data if available
+    else if (companyDataStore[userId] && companyDataStore[userId][company] && !forceRefresh) {
+      companyInfo = companyDataStore[userId][company];
+      console.log(`📚 Using cached company data from previous requests`);
+    } 
+    // No data found
+    else {
+      companyError = `No company information available for: ${company}`;
+      console.log(`⚠️ ${companyError}`);
     }
 
-    // Search document database for relevant information
+    const activeConversationHistory = conversationStore[userId][company];
+    
+    // Prepare user-related context from both user_data and userProfile
+    const enrichedUserProfile = {
+      ...userProfile,
+      additionalData: user_data
+    };
+
+    // Search document database for relevant information with enhanced search terms
+    console.log(`\n===== KNOWLEDGE BASE SEARCH =====`);
     let documentContext = "";
     let documentError = null;
     try {
-      console.log(`Querying ChromaDB with: "${company} ${query}"`);
+      // Create a comprehensive search query using company, query, and sales domain context
+      let searchTerms = [`${company}`, `${query}`];
       
-      // Create a more comprehensive search query using both the company, query and user data
-      const searchTerms = [`${company}`, `${query}`];
+      // Add user profile and context details to enhance search relevance
+      if (userProfile && userProfile.industry) {
+        searchTerms.push(userProfile.industry);
+      }
+      
+      if (userProfile && userProfile.businessType) {
+        searchTerms.push(userProfile.businessType);
+      }
+      
+      // Add sales-specific terms to focus on sales strategy content
+      const salesTerms = ["sales strategy", "sales approach", "business development", "sales techniques"];
+      
+      // Select relevant sales terms based on the query
+      const relevantSalesTerms = salesTerms.filter(term => 
+        query.toLowerCase().includes(term.split(" ")[0].toLowerCase())
+      );
+      
+      if (relevantSalesTerms.length > 0) {
+        searchTerms = [...searchTerms, ...relevantSalesTerms];
+      }
       
       // Add any user_data to the search context if available
       if (user_data && user_data.length > 0) {
-        console.log("Using additional user data for document search");
+        console.log(`👤 Enhancing search with user data context`);
         searchTerms.push(...user_data);
       }
       
       // Join with spaces and remove any double spaces
       const searchQuery = searchTerms.join(' ').replace(/\s+/g, ' ').trim();
-      console.log(`Final ChromaDB search query: "${searchQuery}"`);
+      console.log(`🔍 ChromaDB search query: "${searchQuery}"`);
       
+      // Query ChromaDB with enhanced search
       let docResults = null;
       try {
-        docResults = await chromaService.queryAllDocumentCollections(searchQuery, 5);
-        console.log("ChromaDB search results:", JSON.stringify({
-          hasResults: !!docResults,
-          totalCollections: docResults?.totalCollections,
-          searchedCollections: docResults?.searchedCollections,
-          totalResults: docResults?.totalResults,
-          documentsCount: docResults?.documents?.length
-        }));
+        // Define specialized collections to search based on query content
+        const salesCollections = ["sales_strategy", "business_development", "sales_techniques"];
+        
+        // Search with higher limit to get more content
+        docResults = await chromaService.queryAllDocumentCollections(searchQuery, 8);
+        console.log(`📊 ChromaDB search results: ${docResults?.documents?.length || 0} documents found`);
+        
+        // If we have very few results from all collections, try searching specifically sales collections
+        if ((!docResults || !docResults.documents || docResults.documents.length < 2) && 
+            query.toLowerCase().includes("sales") || 
+            query.toLowerCase().includes("strategy")) {
+          
+          console.log(`🔍 Searching sales-specific collections for better results`);
+          const salesResults = await chromaService.querySpecificCollections(searchQuery, salesCollections, 5);
+          
+          if (salesResults && salesResults.documents && salesResults.documents.length > 0) {
+            console.log(`✅ Found ${salesResults.documents.length} results in sales collections`);
+            docResults = salesResults;
+          }
+        }
       } catch (chromaError) {
-        console.error("Error in ChromaDB search:", chromaError);
+        console.error(`❌ ChromaDB search error: ${chromaError.message}`);
         documentError = `ChromaDB search error: ${chromaError.message}`;
-        // Continue without ChromaDB results
       }
       
-      // Use fallback empty result if ChromaDB search failed
-      if (!docResults) {
-        docResults = {
-          documents: [],
-          query: searchQuery,
-          totalCollections: 0,
-          searchedCollections: 0,
-          totalResults: 0,
-          error: documentError
-        };
-      }
-      
-      // Process results only if documents exist
-      if (docResults.documents && docResults.documents.length > 0) {
+      // Process and format search results
+      if (docResults && docResults.documents && docResults.documents.length > 0) {
         // Handle different result structures that might come back
         let relevantDocs = [];
         
         if (Array.isArray(docResults.documents)) {
-          // If documents is an array of documents
-          relevantDocs = docResults.documents;
-        } else if (Array.isArray(docResults.documents[0])) {
-          // If documents is an array of arrays
-          relevantDocs = docResults.documents[0];
+          if (Array.isArray(docResults.documents[0])) {
+            // If documents is an array of arrays
+            relevantDocs = docResults.documents.flat();
+          } else {
+            // If documents is a simple array
+            relevantDocs = docResults.documents;
+          }
         }
         
         if (relevantDocs.length > 0) {
-          // Check if each document is an object with a text property or already a string
+          // Extract text content from documents
           const texts = relevantDocs.map(doc => {
             if (typeof doc === 'string') return doc;
             if (doc && doc.text) return doc.text;
             if (doc && doc.document) return doc.document;
-            return JSON.stringify(doc).substring(0, 100); // Fallback
+            return JSON.stringify(doc).substring(0, 100);
           });
           
-          documentContext = texts.join("\n\n").substring(0, 3000); // Increased from 2000
-          console.log(`Found relevant document information: ${documentContext.length} characters`);
+          // Format document context with source attribution if available
+          const formattedDocs = texts.map((text, index) => {
+            const source = docResults.metadatas && docResults.metadatas[index] ? 
+              docResults.metadatas[index].source || "Knowledge Base" : 
+              "Knowledge Base";
+            
+            return `[Source: ${source}]\n${text}`;
+          });
+          
+          // Prioritize more relevant documents by limiting to first 3000 characters
+          documentContext = formattedDocs.join("\n\n").substring(0, 3000);
+          console.log(`📄 Found ${formattedDocs.length} relevant documents (${documentContext.length} chars)`);
         }
       } else {
-        console.log("No matching documents found in ChromaDB");
+        console.log(`⚠️ No matching documents found in knowledge base`);
         documentContext = "No relevant documents found in the knowledge base.";
       }
     } catch (error) {
       documentError = `Error searching document database: ${error.message || error}`;
-      console.error("ChromaDB search error:", error);
-      
-      // Add more details to help debugging
-      if (error.stack) {
-        console.error("Error stack:", error.stack);
-      }
+      console.error(`❌ Knowledge base search error: ${error}`);
     }
 
     // Format conversation history for the AI
-    const conversationLog = conversationHistory.map(entry => 
+    console.log(`\n===== CONVERSATION CONTEXT =====`);
+    const conversationLog = activeConversationHistory.map(entry => 
       `User: ${entry.query}\nAI: ${entry.response}`
     ).join('\n\n');
+    console.log(`📝 Using ${activeConversationHistory.length} previous conversation entries`);
 
-    // Construct prompt for AI service
+    // Construct optimized prompt for AI service
     const prompt = `
       You are an AI sales co-pilot assistant, helping a sales professional engage with ${company}.
+      Answer queries based on both the company data provided and knowledge base documents.
       
-      ${userProfile && Object.keys(userProfile).length > 0 ? 
+      ${enrichedUserProfile && Object.keys(enrichedUserProfile).length > 0 ? 
         `SALES REPRESENTATIVE PROFILE:
-        Name: ${userProfile.name || 'Sales Representative'}
-        Role: ${userProfile.role || 'Sales Professional'}
-        Company: ${userProfile.company || 'Our Company'}
-        Business Type: ${userProfile.businessType || 'Service/Product Provider'}
-        Industry Focus: ${userProfile.industry || 'Technology Solutions'}
-        Location: ${userProfile.location || 'Global'}` : ''}
+        Name: ${enrichedUserProfile.name || 'Sales Representative'}
+        Role: ${enrichedUserProfile.role || 'Sales Professional'}
+        Company: ${enrichedUserProfile.company || 'Our Company'}
+        Business Type: ${enrichedUserProfile.businessType || 'Service/Product Provider'}
+        Industry Focus: ${enrichedUserProfile.industry || 'Technology Solutions'}
+        Location: ${enrichedUserProfile.location || 'Global'}
+        ${enrichedUserProfile.education ? `Education: ${JSON.stringify(enrichedUserProfile.education)}` : ''}
+        ${enrichedUserProfile.previousEmployers ? `Previous Employers: ${JSON.stringify(enrichedUserProfile.previousEmployers)}` : ''}` : ''}
       
       ${userContext && userContext.productDescription ? 
         `YOUR PRODUCT/SERVICE OFFERING:
-        ${userContext.productDescription}` : ''}
+        ${userContext.productDescription}
+        ${userContext.sellerOfferings ? `Products/Services: ${JSON.stringify(userContext.sellerOfferings)}` : ''}` : ''}
       
-      ${user_data && user_data.length > 0 ? 
-        `USER-PROVIDED CONTEXT ABOUT THE COMPANY:\n${user_data.join("\n")}\n\n` : ''}
-      
-      COMPANY INFORMATION FROM DATABASE:
+      COMPANY INFORMATION:
       ${Object.keys(companyInfo).length > 0 ? 
         JSON.stringify(companyInfo, null, 2) : 
-        "No structured company information available from our database."}
+        "No structured company information available."}
       ${companyError ? `NOTE: ${companyError}` : ''}
       
-      RELEVANT KNOWLEDGE BASE DOCUMENTS:
+      RELEVANT KNOWLEDGE BASE DOCUMENTS ABOUT SALES STRATEGIES AND THIS COMPANY:
       ${documentContext ? documentContext : "No relevant documents found in knowledge base."}
       ${documentError ? `NOTE: ${documentError}` : ''}
       
@@ -185,11 +250,13 @@ const salesCoPilot = async (req, res) => {
       
       First, determine if you have sufficient information to answer the query effectively. If not, acknowledge what's missing.
       
-      Then, provide a helpful, concise response that:
-      1. Draws from both the company database AND knowledge base documents when relevant
-      2. Clearly indicates when information comes from our knowledge base vs. external company database
+      Then, provide a helpful, structured response that:
+      1. Draws from both the company data AND knowledge base documents when relevant
+      2. Clearly indicates when information comes from our knowledge base versus company data
       3. Addresses the specific question without unnecessary information
-      4. When appropriate, suggests ways the sales representative's ${userProfile.businessType || ''} offering in ${userProfile.industry || ''} could be relevant to ${company}'s needs
+      4. When appropriate, suggests practical sales approaches based on the knowledge base content
+      5. When relevant, connects the sales professional's offerings to the company's needs or challenges
+      6. Provides specific, actionable advice when the query is about sales strategy
       
       Finally, suggest 3 relevant follow-up questions the user might want to ask next.
       
@@ -201,6 +268,7 @@ const salesCoPilot = async (req, res) => {
     `;
 
     // Generate AI response
+    console.log(`\n===== GENERATING AI RESPONSE =====`);
     const aiResult = await aiService.generateContent(prompt);
     
     // Parse AI response (handle potential JSON parsing issues)
@@ -209,38 +277,48 @@ const salesCoPilot = async (req, res) => {
       // Clean up the response in case it has markdown code blocks
       const cleanedResponse = aiResult.replace(/```json|```/g, '').trim();
       parsedResponse = JSON.parse(cleanedResponse);
+      console.log(`✅ Successfully parsed AI response`);
     } catch (parseError) {
-      console.error('Error parsing AI response:', parseError);
+      console.error(`❌ Error parsing AI response: ${parseError.message}`);
       
       // Fallback for invalid JSON responses
       parsedResponse = {
         response: aiResult,
         followUpQuestions: [
-          "Can you tell me more about this company?",
-          "What are their key pain points?",
-          "How can our solution help them?"
+          "Can you tell me more about this company's challenges?",
+          "What sales strategies would work best for this industry?",
+          "How can I align my solution to their business needs?"
         ]
       };
     }
 
-    // Store this interaction in history
-    conversationHistory.push({
+    // Store this interaction in conversation history
+    activeConversationHistory.push({
       query,
       response: parsedResponse.response,
       timestamp: new Date().toISOString()
     });
 
-    // Limit history size to prevent memory issues (keep last 10 interactions)
-    if (conversationHistory.length > 10) {
-      conversationHistory.shift();
+    // Limit history size to prevent memory issues (keep last 15 interactions)
+    if (activeConversationHistory.length > 15) {
+      activeConversationHistory.shift();
     }
 
-    // Return response with any errors encountered
+    console.log(`\n===== RESPONSE COMPLETE =====`);
+    
+    // Return enriched response with metadata
     return res.status(200).json({
       success: true,
       response: parsedResponse.response,
       followUpQuestions: parsedResponse.followUpQuestions,
-      conversationHistory,
+      conversationHistory: activeConversationHistory,
+      metadata: {
+        timestamp: new Date().toISOString(),
+        company: company,
+        userId: userId,
+        hasCompanyData: Object.keys(companyInfo).length > 0,
+        conversationLength: activeConversationHistory.length
+      },
       errors: {
         companyError: companyError,
         documentError: documentError
@@ -258,7 +336,7 @@ const salesCoPilot = async (req, res) => {
 };
 
 /**
- * Clear conversation history for a user
+ * Clear conversation history and company data for a user
  */
 const clearConversationHistory = async (req, res) => {
   try {
@@ -273,12 +351,16 @@ const clearConversationHistory = async (req, res) => {
 
     if (conversationStore[userId]) {
       if (company) {
-        // Clear specific company conversation
+        // Clear specific company conversation and data
         conversationStore[userId][company] = [];
+        if (companyDataStore[userId] && companyDataStore[userId][company]) {
+          delete companyDataStore[userId][company];
+        }
         console.log(`Cleared conversation history for user ${userId} and company ${company}`);
       } else {
-        // Clear all conversations for this user
+        // Clear all conversations and data for this user
         conversationStore[userId] = {};
+        companyDataStore[userId] = {};
         console.log(`Cleared all conversation history for user ${userId}`);
       }
     }
@@ -299,10 +381,12 @@ const clearConversationHistory = async (req, res) => {
   }
 };
 
-
+/**
+ * Get company information from multiple sources
+ */
 const getCompanyInfo = async (req, res) => {
   try {
-    const { company, useExaAi = false, userId } = req.body;
+    const { company, useExaAi = false, userId, companyData = {} } = req.body;
     
     if (!company) {
       return res.status(400).json({
@@ -311,29 +395,15 @@ const getCompanyInfo = async (req, res) => {
       });
     }
     
-    // Get company info from primary source
-    let companyInfo = {};
+    // Use company data from payload
+    let companyInfo = companyData;
     let companyError = null;
     
-    try {
-      // Try organization service first
-      const organizations = await organizationService.searchOrganizations(company);
-      if (Array.isArray(organizations) && organizations.length > 0) {
-        // Use best match
-        const targetCompany = organizations.find(org => 
-          org.name && company && org.name.toLowerCase() === company.toLowerCase()
-        ) || organizations[0];
-        
-        companyInfo = await organizationService.getOrganizationDetails(targetCompany.id);
-        console.log(`Found company information for: ${targetCompany.name}`);
-      } else {
-        companyError = `No company information found in primary source`;
-      }
-    } catch (error) {
-      companyError = `Error with primary data source: ${error.message}`;
+    if (!companyInfo || Object.keys(companyInfo).length === 0) {
+      companyError = `No company information provided in payload`;
     }
     
-    // If requested and primary source failed, try Exa.ai
+    // If requested and no payload data, try Exa.ai as fallback
     let exaInfo = null;
     let exaError = null;
     
@@ -370,14 +440,12 @@ const getCompanyInfo = async (req, res) => {
   }
 };
 
+/**
+ * Get strategic sales insights for a company
+ */
 const getStrategicSalesInsights = async (req, res) => {
   try {
-    const { 
-      company, 
-      userId, 
-      sellerProfile = {}, 
-      sellerOfferings = [] 
-    } = req.body;
+    const { company, userId, companyData = {}, userProfile = {} } = req.body;
     
     if (!company) {
       return res.status(400).json({
@@ -386,402 +454,138 @@ const getStrategicSalesInsights = async (req, res) => {
       });
     }
     
-    // Get comprehensive company information
-    const companyData = await getEnhancedCompanyData(company);
+    console.log(`\n===== GENERATING STRATEGIC SALES INSIGHTS =====`);
+    console.log(`🏢 Company: ${company}`);
+    console.log(`👤 User: ${userId || 'Anonymous'}`);
     
-    // Get key executives from LinkedIn
-    const executives = await getKeyExecutives(company);
+    // Use company data from payload
+    if (!companyData || Object.keys(companyData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company data is required'
+      });
+    }
+
+    // Extract key information
+    const companyInsights = {
+      name: company,
+      industry: companyData.industry || 'Unknown',
+      businessType: companyData.businessType || 'Unknown',
+      technologies: companyData.technologies_used || [],
+      decisionMakers: companyData.decison_makers || [],
+      influencers: companyData.decison_influencers || [],
+      hiringTrends: companyData.hiring_trends || []
+    };
     
-    // Generate strategic insights
-    const strategicInsights = await generateStrategicInsights(
-      companyData, 
-      executives, 
-      sellerProfile, 
-      sellerOfferings
-    );
+    // Get relevant insights
+    const strategicInsights = {};
     
+    // 1. Technology stack matches
+    if (userProfile.sellerOfferings && companyInsights.technologies.length > 0) {
+      strategicInsights.technologyMatches = companyInsights.technologies
+        .filter(tech => userProfile.sellerOfferings.some(
+          offering => tech.toLowerCase().includes(offering.toLowerCase()) || 
+                    offering.toLowerCase().includes(tech.toLowerCase())
+        ))
+        .map(tech => ({
+          technology: tech,
+          relevance: `${tech} aligns with your offerings`
+        }));
+    } else {
+      strategicInsights.technologyMatches = [];
+    }
+    
+    // 2. Hiring needs analysis
+    if (companyInsights.hiringTrends && companyInsights.hiringTrends.length > 0) {
+      strategicInsights.hiringInsights = companyInsights.hiringTrends
+        .filter(job => userProfile.sellerOfferings && userProfile.sellerOfferings.some(
+          offering => (job.title && job.title.toLowerCase().includes(offering.toLowerCase())) || 
+                    (job.description && job.description.toLowerCase().includes(offering.toLowerCase()))
+        ))
+        .map(job => ({
+          position: job.title,
+          insight: `${job.title} indicates need for ${job.description ? job.description.substring(0, 50) + '...' : 'related solutions'}`
+        }));
+    } else {
+      strategicInsights.hiringInsights = [];
+    }
+    
+    // 3. Company challenges (based on industry)
+    strategicInsights.companyChallenges = getIndustryChallenges(companyInsights.industry);
+    
+    // Return the insights
     return res.status(200).json({
       success: true,
       company,
-      insights: strategicInsights,
-      companyData: {
-        summary: companyData.summary,
-        executiveCount: executives.length
-      }
+      strategicInsights
     });
   } catch (error) {
-    console.error('Error generating strategic sales insights:', error);
+    console.error('Error getting strategic sales insights:', error);
     return res.status(500).json({
       success: false,
-      message: 'Error processing strategic sales insights',
+      message: 'Error processing request',
       error: error.message
     });
   }
 };
 
 /**
- * Gets enhanced company data from multiple sources
+ * Helper function to get industry-specific challenges
  */
-async function getEnhancedCompanyData(company) {
-  // Get primary company information from organization service
-  let companyData = { summary: {}, technologies: [], locations: [], trends: [] };
+function getIndustryChallenges(industry) {
+  const industryLower = (industry || '').toLowerCase();
   
-  try {
-    const organizations = await organizationService.searchOrganizations(company);
-    if (Array.isArray(organizations) && organizations.length > 0) {
-      // Find best match
-      const targetCompany = organizations.find(org => 
-        org.name && company && org.name.toLowerCase() === company.toLowerCase()
-      ) || organizations[0];
-      
-      // Get detailed company information
-      const details = await organizationService.getOrganizationDetails(targetCompany.id);
-      companyData.summary = details;
-      
-      // Extract technologies if available
-      if (details.technologies) {
-        companyData.technologies = details.technologies;
-      }
-      
-      // Extract locations if available
-      if (details.locations) {
-        companyData.locations = details.locations;
-      }
-      
-      // Extract recent news or announcements
-      if (details.recent_news) {
-        companyData.recentNews = details.recent_news;
-      }
-      
-      // Extract hiring trends
-      if (details.job_postings) {
-        companyData.jobPostings = details.job_postings;
-      }
-    }
-  } catch (error) {
-    console.error(`Error fetching organization data: ${error.message}`);
-  }
-  
-  // Enhance with industry trends via AI analysis
-  try {
-    const aiService = require('../services/aiService');
-    const prompt = `
-      Based on recent industry data, what are the top 5 strategic priorities and trends
-      for companies in the ${companyData.summary.industry || company} sector?
-      Format the response as JSON with fields: 
-      { "trends": [{"name": "trend name", "description": "brief explanation"}] }
-    `;
-    
-    const trendAnalysis = await aiService.generateContent(prompt);
-    try {
-      const parsedTrends = JSON.parse(trendAnalysis.replace(/```json|```/g, '').trim());
-      companyData.industryTrends = parsedTrends.trends;
-    } catch (parseError) {
-      console.error('Error parsing AI trend analysis:', parseError);
-    }
-  } catch (aiError) {
-    console.error(`Error generating industry trends: ${aiError.message}`);
-  }
-  
-  return companyData;
-}
-
-/**
- * Gets key executives from LinkedIn using Exa service
- */
-async function getKeyExecutives(company) {
-  try {
-    const exaService = require('../services/exaService');
-    
-    // Search for C-level executives
-    const cLevelProfiles = await exaService.searchLinkedInProfiles(
-      company, 
-      'CEO OR CTO OR CMO OR CIO', 
-      '', // Location left blank for broader search
-      5,  // Limit to 5 executives
-      'technology OR strategy' // Focus on technology leaders
-    );
-    
-    return cLevelProfiles || [];
-  } catch (error) {
-    console.error(`Error fetching LinkedIn profiles: ${error.message}`);
-    return [];
-  }
-}
-
-/**
- * Generate strategic insights for sales alignment
- */
-async function generateStrategicInsights(companyData, executives, sellerProfile, sellerOfferings) {
-  const insights = {
-    commonBackgrounds: [],
-    executiveStrategicPriorities: [],
-    technologyStackMatches: [],
-    geographicOpportunities: [],
-    hiringPatternMatches: [],
-    industryTrendAlignment: []
+  // Common challenges by industry
+  const challengesByIndustry = {
+    'technology': [
+      'Rapid technological obsolescence',
+      'Talent acquisition and retention',
+      'Cybersecurity threats',
+      'Digital transformation costs'
+    ],
+    'financial': [
+      'Regulatory compliance',
+      'Digital disruption',
+      'Data security and privacy',
+      'Legacy system integration'
+    ],
+    'healthcare': [
+      'Cost containment pressures',
+      'Regulatory compliance',
+      'Digital transformation',
+      'Patient data security'
+    ],
+    'retail': [
+      'E-commerce competition',
+      'Supply chain disruptions',
+      'Changing consumer behaviors',
+      'Omnichannel integration'
+    ],
+    'manufacturing': [
+      'Supply chain resilience',
+      'Automation and workforce transitions',
+      'Sustainability requirements',
+      'Digital transformation costs'
+    ]
   };
   
-  // 1. Identify common backgrounds
-  if (executives.length > 0 && sellerProfile) {
-    insights.commonBackgrounds = await findCommonBackgrounds(executives, sellerProfile);
+  // Find relevant challenges
+  for (const [key, challenges] of Object.entries(challengesByIndustry)) {
+    if (industryLower.includes(key)) {
+      return challenges;
+    }
   }
   
-  // 2. Match executive priorities with seller offerings
-  if (companyData.recentNews && sellerOfferings.length > 0) {
-    insights.executiveStrategicPriorities = await matchExecutivePriorities(
-      companyData.recentNews, 
-      sellerOfferings
-    );
-  }
-  
-  // 3. Detect technology stack matches
-  if (companyData.technologies && sellerOfferings.length > 0) {
-    insights.technologyStackMatches = matchTechnologyStack(
-      companyData.technologies, 
-      sellerOfferings
-    );
-  }
-  
-  // 4. Identify geographic opportunities
-  if (companyData.locations && sellerProfile.regions) {
-    insights.geographicOpportunities = identifyGeographicOpportunities(
-      companyData.locations, 
-      sellerProfile.regions
-    );
-  }
-  
-  // 5. Analyze hiring patterns
-  if (companyData.jobPostings && sellerOfferings.length > 0) {
-    insights.hiringPatternMatches = analyzeHiringPatterns(
-      companyData.jobPostings, 
-      sellerOfferings
-    );
-  }
-  
-  // 6. Align industry trends with offerings
-  if (companyData.industryTrends && sellerOfferings.length > 0) {
-    insights.industryTrendAlignment = alignIndustryTrends(
-      companyData.industryTrends, 
-      sellerOfferings
-    );
-  }
-  
-  return insights;
+  // Default challenges if no industry match
+  return [
+    'Digital transformation',
+    'Cost optimization',
+    'Talent acquisition and retention',
+    'Competitive pressures'
+  ];
 }
 
-/**
- * Find common backgrounds between executives and seller
- */
-async function findCommonBackgrounds(executives, sellerProfile) {
-  const commonConnections = [];
-  
-  for (const executive of executives) {
-    const commonPoints = {
-      executiveName: executive.name,
-      executivePosition: executive.designation,
-      commonFactors: []
-    };
-    
-    // Check for common education
-    if (sellerProfile.education && executive.snippet) {
-      for (const school of sellerProfile.education) {
-        if (executive.snippet.toLowerCase().includes(school.toLowerCase())) {
-          commonPoints.commonFactors.push({
-            type: 'education',
-            detail: `Both attended ${school}`
-          });
-        }
-      }
-    }
-    
-    // Check for common previous employers
-    if (sellerProfile.previousEmployers && executive.snippet) {
-      for (const employer of sellerProfile.previousEmployers) {
-        if (executive.snippet.toLowerCase().includes(employer.toLowerCase())) {
-          commonPoints.commonFactors.push({
-            type: 'previous_employer',
-            detail: `Both worked at ${employer}`
-          });
-        }
-      }
-    }
-    
-    // Check for common locations
-    if (sellerProfile.locations && executive.location) {
-      for (const location of sellerProfile.locations) {
-        if (executive.location.toLowerCase().includes(location.toLowerCase())) {
-          commonPoints.commonFactors.push({
-            type: 'location',
-            detail: `Both have connection to ${location}`
-          });
-        }
-      }
-    }
-    
-    if (commonPoints.commonFactors.length > 0) {
-      commonConnections.push(commonPoints);
-    }
-  }
-  
-  return commonConnections;
-}
-
-/**
- * Match executive priorities with seller offerings using AI analysis
- */
-async function matchExecutivePriorities(recentNews, sellerOfferings) {
-  try {
-    const aiService = require('../services/aiService');
-    
-    const prompt = `
-      Analyze the following recent company news and statements:
-      ${JSON.stringify(recentNews)}
-      
-      Extract any strategic priorities or initiatives mentioned by executives.
-      Then determine if any of these priorities align with the following offerings:
-      ${JSON.stringify(sellerOfferings)}
-      
-      Format the response as JSON with fields:
-      {
-        "alignments": [
-          {
-            "priority": "Executive stated priority",
-            "offering": "Matching seller offering",
-            "alignmentStrength": "high|medium|low",
-            "reason": "Brief explanation of why they align"
-          }
-        ]
-      }
-    `;
-    
-    const analysis = await aiService.generateContent(prompt);
-    try {
-      const parsedAnalysis = JSON.parse(analysis.replace(/```json|```/g, '').trim());
-      return parsedAnalysis.alignments;
-    } catch (parseError) {
-      console.error('Error parsing AI executive priorities analysis:', parseError);
-      return [];
-    }
-  } catch (error) {
-    console.error(`Error analyzing executive priorities: ${error.message}`);
-    return [];
-  }
-}
-
-/**
- * Match technology stack with seller offerings
- */
-function matchTechnologyStack(technologies, sellerOfferings) {
-  const matches = [];
-  
-  for (const tech of technologies) {
-    for (const offering of sellerOfferings) {
-      // Convert both to lowercase for case-insensitive matching
-      const techLower = typeof tech === 'string' ? tech.toLowerCase() : 
-                         tech.name ? tech.name.toLowerCase() : '';
-      const offeringLower = offering.toLowerCase();
-      
-      // Check for direct matches or related technology matches
-      if (techLower.includes(offeringLower) || offeringLower.includes(techLower)) {
-        matches.push({
-          technology: typeof tech === 'string' ? tech : tech.name,
-          offering: offering,
-          matchType: 'direct'
-        });
-      }
-    }
-  }
-  
-  return matches;
-}
-
-/**
- * Identify geographic expansion opportunities
- */
-function identifyGeographicOpportunities(companyLocations, sellerRegions) {
-  const opportunities = [];
-  
-  for (const companyLoc of companyLocations) {
-    for (const sellerRegion of sellerRegions) {
-      if (typeof companyLoc === 'string' && companyLoc.toLowerCase().includes(sellerRegion.toLowerCase()) ||
-          typeof companyLoc === 'object' && companyLoc.name && companyLoc.name.toLowerCase().includes(sellerRegion.toLowerCase())) {
-        
-        const locationName = typeof companyLoc === 'string' ? companyLoc : companyLoc.name;
-        
-        opportunities.push({
-          location: locationName,
-          sellerRegion: sellerRegion,
-          opportunity: `Seller has presence in ${sellerRegion} where company operates`
-        });
-      }
-    }
-  }
-  
-  return opportunities;
-}
-
-/**
- * Analyze hiring patterns for matches with seller offerings
- */
-function analyzeHiringPatterns(jobPostings, sellerOfferings) {
-  const matches = [];
-  
-  for (const job of jobPostings) {
-    const jobTitle = job.title || '';
-    const jobDescription = job.description || '';
-    
-    for (const offering of sellerOfferings) {
-      // Convert to lowercase for case-insensitive matching
-      const offeringLower = offering.toLowerCase();
-      const titleLower = jobTitle.toLowerCase();
-      const descriptionLower = jobDescription.toLowerCase();
-      
-      if (titleLower.includes(offeringLower) || descriptionLower.includes(offeringLower)) {
-        matches.push({
-          jobTitle: jobTitle,
-          offering: offering,
-          reason: titleLower.includes(offeringLower) ? 
-            'Job title directly relates to seller offering' : 
-            'Job description mentions technology/service related to seller offering'
-        });
-      }
-    }
-  }
-  
-  return matches;
-}
-
-/**
- * Align industry trends with seller offerings
- */
-function alignIndustryTrends(industryTrends, sellerOfferings) {
-  const alignments = [];
-  
-  for (const trend of industryTrends) {
-    const trendName = trend.name || '';
-    const trendDescription = trend.description || '';
-    
-    for (const offering of sellerOfferings) {
-      // Convert to lowercase for case-insensitive matching
-      const offeringLower = offering.toLowerCase();
-      const trendNameLower = trendName.toLowerCase();
-      const trendDescriptionLower = trendDescription.toLowerCase();
-      
-      if (trendNameLower.includes(offeringLower) || trendDescriptionLower.includes(offeringLower) || 
-          offeringLower.includes(trendNameLower)) {
-        alignments.push({
-          trend: trendName,
-          offering: offering,
-          alignment: 'Seller offering aligns with industry trend'
-        });
-      }
-    }
-  }
-  
-  return alignments;
-}
-
+// Add the new function to exports 
 module.exports = {
   salesCoPilot,
   clearConversationHistory,

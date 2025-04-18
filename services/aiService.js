@@ -1,26 +1,21 @@
 const geminiService = require('./geminiService');
-const openaiService = require('./openaiService');
 
 /**
- * AI Service with automatic fallback
+ * AI Service using only Gemini
  */
 class AIService {
   /**
-   * Generate content using available AI services with fallback
+   * Generate content using Gemini AI (no fallback)
    * @param {String} prompt - The prompt to generate content from
    * @returns {Promise<String>} - Generated text content
    */
   async generateContent(prompt) {
     try {
-      // Try Gemini first
-      console.log("Attempting to generate content with Gemini...");
+      console.log("Generating content with Gemini...");
       return await geminiService.generateContent(prompt);
     } catch (error) {
-      console.log("Gemini service failed, falling back to OpenAI:", error.message);
-      
-      // Fall back to OpenAI
-      console.log("Attempting to generate content with OpenAI...");
-      return await openaiService.generateContent(prompt);
+      console.error("Error generating content with Gemini:", error.message);
+      throw new Error(`Gemini API error: ${error.message}`);
     }
   }
 }

@@ -3,6 +3,7 @@ const dotenv = require('dotenv');
 const mainRouter = require('./routes/main');
 const cors = require('cors');
 const { chromaClient, verifyChromaConnection } = require('./services/chromaService');
+const apiKeyAuth = require('./middleware/apiKeyAuth');
 
 // Load environment variables
 dotenv.config();
@@ -19,6 +20,9 @@ app.use(cors({
 // Other middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Apply the API key middleware to all routes
+app.use('/api', apiKeyAuth);
 
 // Routes
 app.use('/api', mainRouter);

@@ -508,4 +508,156 @@ class ExaSearchService {
   }
 }
 
+/**
+ * Search for executive statements and company news
+ */
+exports.searchExecutiveStatements = async (companyName) => {
+  try {
+    console.log(`🔍 Searching for executive statements from ${companyName}`);
+    
+    // Create a more targeted query that focuses on 2025 executive communications
+    const exaQuery = `${companyName} "2025" (CEO OR CTO OR CFO OR CMO OR CIO) (interview OR "press release" OR "earnings call" OR blog OR "social media" OR announcement) (strategy OR priorities OR roadmap OR "strategic goals" OR "technological investments" OR "operational goals")`;
+    
+    // Get service instance reference
+    const exaService = require('../services/exaSearchService');
+    
+    // Use the proper executeExaSearch method
+    const results = await exaService.executeExaSearch(exaQuery);
+    
+    console.log(`✅ Successfully retrieved executive statements for ${companyName}`);
+    return results;
+  } catch (error) {
+    console.error(`❌ Error searching executive statements: ${error.message}`);
+    return { results: [] }; // Return empty results instead of throwing
+  }
+};
+
+/**
+ * Search for geographic expansion plans
+ */
+exports.searchGeographicExpansion = async (companyName) => {
+  try {
+    console.log(`🔍 Searching for geographic expansion plans of ${companyName}`);
+    
+    // Create a more targeted query that focuses on 2025 expansion plans
+    const exaQuery = `${companyName} "2025" ("expansion plans" OR "new market" OR "opening office" OR "entering market" OR "global expansion" OR "regional growth") (CEO OR CTO OR CFO OR CMO OR CIO)`;
+    
+    // Get service instance reference
+    const exaService = require('../services/exaSearchService');
+    
+    // Use the proper executeExaSearch method
+    const results = await exaService.executeExaSearch(exaQuery);
+    
+    console.log(`✅ Successfully retrieved geographic expansion plans for ${companyName}`);
+    return results;
+  } catch (error) {
+    console.error(`❌ Error searching geographic expansion: ${error.message}`);
+    return { results: [] }; // Return empty results instead of throwing
+  }
+};
+
+/**
+ * Extract strategic priorities from executive statements
+ */
+exports.analyzeStrategicPriorities = async (companyName) => {
+  try {
+    console.log(`🔍 Analyzing strategic priorities for ${companyName} from 2025 communications`);
+    
+    // Create a highly targeted query for strategic priorities in 2025
+    const exaQuery = `${companyName} "2025" (CEO OR CTO OR CFO OR CMO) ("strategic priorities" OR "strategic goals" OR "key initiatives" OR "investment focus" OR "technology roadmap" OR "growth plans") (announced OR stated OR revealed OR outlined OR presented)`;
+    
+    // Get service instance reference
+    const exaService = require('../services/exaSearchService');
+    
+    // Use the proper executeExaSearch method
+    const results = await exaService.executeExaSearch(exaQuery);
+    
+    // Process and categorize the results
+    const categorizedPriorities = {
+      technologicalInvestments: [],
+      marketExpansion: [],
+      productDevelopment: [],
+      operationalGoals: [],
+      executiveQuotes: []
+    };
+    
+    if (results && results.results && results.results.length > 0) {
+      results.results.forEach(item => {
+        // Extract executive quotes
+        const quoteMatch = item.text.match(/"([^"]+)"/g);
+        if (quoteMatch) {
+          categorizedPriorities.executiveQuotes.push({
+            quote: quoteMatch[0],
+            source: item.url || 'Unknown',
+            date: new Date().getFullYear() // Ideally extract from the content
+          });
+        }
+        
+        // Categorize based on keywords
+        if (/technology|AI|ML|cloud|digital|innovation|platform|data/i.test(item.text)) {
+          categorizedPriorities.technologicalInvestments.push(item.text);
+        }
+        
+        if (/expansion|market|global|region|territory|country|international/i.test(item.text)) {
+          categorizedPriorities.marketExpansion.push(item.text);
+        }
+        
+        if (/product|service|offering|solution|feature|launch|release/i.test(item.text)) {
+          categorizedPriorities.productDevelopment.push(item.text);
+        }
+        
+        if (/efficiency|cost|streamline|optimize|improve|performance|metric/i.test(item.text)) {
+          categorizedPriorities.operationalGoals.push(item.text);
+        }
+      });
+    }
+    
+    console.log(`✅ Successfully analyzed strategic priorities for ${companyName}`);
+    return {
+      rawResults: results,
+      categorizedPriorities: categorizedPriorities
+    };
+  } catch (error) {
+    console.error(`❌ Error analyzing strategic priorities: ${error.message}`);
+    return { 
+      rawResults: { results: [] },
+      categorizedPriorities: {
+        technologicalInvestments: [],
+        marketExpansion: [],
+        productDevelopment: [],
+        operationalGoals: [],
+        executiveQuotes: []
+      }
+    };
+  }
+};
+
+/**
+ * Search for industry trends related to company and industry
+ */
+exports.searchIndustryTrends = async (companyName, industry) => {
+  try {
+    console.log(`🔍 Searching for industry trends for ${companyName} in ${industry}`);
+    
+    // Create a targeted query for industry trends in 2025
+    const exaQuery = `${companyName} ${industry} "2025" (trends OR "industry trends" OR "market trends" OR "emerging technology" OR innovation OR disruption OR transformation OR "future of") (report OR analysis OR forecast OR prediction)`;
+    
+    // Get service instance reference
+    const exaService = require('../services/exaSearchService');
+    
+    // Use the proper executeExaSearch method
+    const results = await exaService.executeExaSearch(exaQuery);
+    
+    console.log(`✅ Successfully retrieved industry trends for ${companyName}`);
+    return results;
+  } catch (error) {
+    console.error(`❌ Error searching industry trends: ${error.message}`);
+    return { results: [] }; // Return empty results instead of throwing
+  }
+};
+
 module.exports = new ExaSearchService();
+module.exports.searchExecutiveStatements = exports.searchExecutiveStatements;
+module.exports.searchGeographicExpansion = exports.searchGeographicExpansion;
+module.exports.analyzeStrategicPriorities = exports.analyzeStrategicPriorities;
+module.exports.searchIndustryTrends = exports.searchIndustryTrends;
