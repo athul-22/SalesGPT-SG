@@ -25,14 +25,22 @@ BASE_URL = "13.201.83.141:3000/api"
 def api_call(endpoint, method="GET", data=None, files=None, timeout=60):
     url = f"{BASE_URL}/{endpoint}"
     
+    # Add API key authentication header
+    headers = {
+        'x-api-key': 'salesgpt-secure-key-xhsjdjwn2849wbfewdsknsk'
+    }
+    
     try:
         if method == "GET":
-            response = requests.get(url, timeout=timeout)
+            response = requests.get(url, headers=headers, timeout=timeout)
         elif method == "POST":
             if files:
-                response = requests.post(url, data=data, files=files, timeout=timeout)
+                # For multipart/form-data requests (file uploads)
+                # Note: Don't add Content-Type header here as requests sets it with boundary
+                response = requests.post(url, headers=headers, data=data, files=files, timeout=timeout)
             else:
-                response = requests.post(url, json=data, timeout=timeout)
+                # For JSON requests
+                response = requests.post(url, headers=headers, json=data, timeout=timeout)
         
         return response
     except requests.exceptions.ConnectionError:
