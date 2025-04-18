@@ -721,7 +721,7 @@ elif selected_api == "Sales Co-Pilot":
                         if company_input not in st.session_state.messages:
                             st.session_state.messages[company_input] = []
                         
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Error retrieving company information")
             else:
@@ -906,7 +906,7 @@ elif selected_api == "Sales Co-Pilot":
                         if adv_company_input not in st.session_state.messages:
                             st.session_state.messages[adv_company_input] = []
                         
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Error retrieving company information")
             else:
@@ -945,7 +945,7 @@ elif selected_api == "Sales Co-Pilot":
                         st.session_state.messages[json_company_input] = []
                     
                     st.success(f"✅ Successfully imported data for {json_company_input}")
-                    st.experimental_rerun()
+                    st.rerun()
                 except json.JSONDecodeError:
                     st.error("Invalid JSON format. Please check your input.")
             else:
@@ -979,7 +979,7 @@ elif selected_api == "Sales Co-Pilot":
                     )
                     
                     st.success("Conversation cleared!")
-                    st.experimental_rerun()
+                    st.rerun()
         
         # Show company data card when available
         if st.session_state.company_data:
@@ -1119,7 +1119,7 @@ elif selected_api == "Sales Co-Pilot":
             st.session_state.messages[company].append({"role": "user", "content": prompt})
             
             # Show in chat immediately
-            st.experimental_rerun()  # This will show the message and the thinking animation
+            st.rerun()  # This will show the message and the thinking animation
         
         # If we just set thinking to true, handle the API call
         if st.session_state.is_thinking and company in st.session_state.messages and len(st.session_state.messages[company]) > 0:
@@ -1186,13 +1186,13 @@ elif selected_api == "Sales Co-Pilot":
                         st.session_state.followups = []
                     
                     # Update the display
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     # Handle errors
                     st.session_state.is_thinking = False
                     error_msg = f"Sorry, an error occurred: {str(e)}"
                     st.session_state.messages[company].append({"role": "assistant", "content": error_msg})
-                    st.experimental_rerun()
+                    st.rerun()
         
         # Display follow-up questions if available
         if hasattr(st.session_state, 'followups') and st.session_state.followups:
@@ -1209,7 +1209,7 @@ elif selected_api == "Sales Co-Pilot":
                             
                             st.session_state.messages[company].append({"role": "user", "content": question})
                             st.session_state.is_thinking = True
-                            st.experimental_rerun()
+                            st.rerun()
 else:
     st.title("Welcome to SalesGPT API Client")
     st.write("Please select an API from the sidebar to get started.")
