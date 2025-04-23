@@ -7,13 +7,12 @@ class DocumentQueue {
   constructor() {
     this.queue = [];
     this.processing = false;
-    this.maxRetries = 10; // Increase max retries
-    this.batchSize = 1; // Process just 1 chunk at a time
-    this.delayBetweenBatches = 15000; // 15 seconds between batches (increased)
-    this.delayBetweenDocuments = 120000; // 2 minutes between documents (increased)
-    this.maxChunkSize = 250; // Smaller chunks for better processing
+    this.maxRetries = 10; 
+    this.batchSize = 1; 
+    this.delayBetweenBatches = 15000; 
+    this.delayBetweenDocuments = 120000; 
+    this.maxChunkSize = 250;
     
-    // Set up persistent queue
     this.queuePath = path.join(__dirname, '../data/document-queue.json');
     this.queueFile = path.join(__dirname, '../data/queue.json');
     this.ensureQueueDirectory();

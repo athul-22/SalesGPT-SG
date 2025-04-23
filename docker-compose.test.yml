@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  salesgpt-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: salesgpt-test
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=test
+      - PORT=3000
+      - RAPID_API_KEY=${RAPID_API_KEY}
+      - RAPID_API_HOST=${RAPID_API_HOST}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+      - GOOGLE_LOCATION=${GOOGLE_LOCATION}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}-test
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - CHROMA_API_TOKEN=${CHROMA_API_TOKEN}
+      - CHROMA_TENANT=${CHROMA_TENANT}
+      - CHROMA_DATABASE=KnowledgeBase-Test
+      - EXA_API_KEY=${EXA_API_KEY}
+      - ORGANIZATION_API_URL=${ORGANIZATION_API_URL}
+      - ORGANIZATION_API_TOKEN=${ORGANIZATION_API_TOKEN}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - API_KEY=${API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/creds/magiq-ai-fc9670291bfe.json
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./creds:/app/creds
+    networks:
+      - salesgpt-test-network
+
+networks:
+  salesgpt-test-network:
+    driver: bridge

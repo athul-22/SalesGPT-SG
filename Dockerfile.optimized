@@ -1,0 +1,20 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --production
+
+RUN mkdir -p data/uploads logs creds
+
+COPY controllers ./controllers
+COPY routes ./routes
+COPY services ./services
+COPY middleware ./middleware
+COPY utils ./utils
+COPY server.js ./
+COPY ./creds/magiq-ai-fc9670291bfe.json ./creds/
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

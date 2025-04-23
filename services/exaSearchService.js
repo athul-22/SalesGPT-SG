@@ -1,4 +1,3 @@
-// EXA AI SALESSTRATEGYAPI SERVICE
 
 const axios = require('axios');
 require('dotenv').config();

@@ -33,6 +33,7 @@ class DriveService {
       
       // Get credentials path from env or use default path
       const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      console.log(`Looking for credentials at: ${credentialsPath}`);
       
       if (!credentialsPath) {
         console.error('❌ GOOGLE_APPLICATION_CREDENTIALS environment variable not set');

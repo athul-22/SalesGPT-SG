@@ -11,8 +11,8 @@ const generateExaSalesStrategy = async (req, res) => {
     
     // Extract new user context parameters
     const { 
-      userContext = {}, // New parameter for user's business context
-      userProfile = {} // New parameter for user's profile information
+      userContext = {}, 
+      userProfile = {} 
     } = req.body;
     
     if (!companyName) {

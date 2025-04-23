@@ -5,29 +5,27 @@ require('dotenv').config();
  * This middleware validates that all incoming requests contain a valid API key
  */
 const apiKeyAuth = (req, res, next) => {
-  const apiKey = req.headers['x-api-key'];
+  const providedApiKey = req.headers['x-api-key'];
+  const validApiKey = process.env.API_KEY || 'salesgpt-secure-key-xhsjdjwn2849wbfewdsknsk';
   
-  // Use environment variable
-  const VALID_API_KEY = process.env.API_KEY || 'salesgpt-secure-key-2024';
-  
-  if (!apiKey) {
+  if (!providedApiKey) {
     console.log('⛔️ API key missing in request');
     return res.status(401).json({
       success: false,
       message: 'API key is required. Please include x-api-key header.'
     });
   }
+
+  console.log(`Request received for: ${req.path}`);
+  console.log(`API Key provided: ${providedApiKey ? 'YES' : 'NO'}`);
+  console.log(`Expected API Key exists: ${validApiKey ? 'YES' : 'NO'}`);
   
-  if (apiKey !== VALID_API_KEY) {
-    console.log('⛔️ Invalid API key provided');
-    return res.status(403).json({
-      success: false,
-      message: 'Invalid API key provided.'
-    });
+  if (!providedApiKey || providedApiKey !== validApiKey) {
+    console.log('API Key authentication failed');
+    return res.status(403).send('Forbidden: Invalid API Key');
   }
   
-  // If API key is valid, proceed to next middleware or route handler
-  console.log('✅ API key validation successful');
+  console.log('API Key authentication successful');
   next();
 };
 

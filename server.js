@@ -14,7 +14,7 @@ const port = process.env.PORT || 3000;
 app.use(cors({
   origin: '*',  // For development. In production, specify allowed domains
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-KEY'] 
 }));
 
 // Other middleware

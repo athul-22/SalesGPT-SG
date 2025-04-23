@@ -4,7 +4,6 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-// Create a simple client with cloud configuration
 const chromaClient = new ChromaClient({
   path: "https://api.trychroma.com:8000",
   auth: { 
@@ -16,7 +15,6 @@ const chromaClient = new ChromaClient({
   database: process.env.CHROMA_DATABASE || 'KnowledgeBase'
 });
 
-// Add this utility function for retrying operations with exponential backoff
 async function retryWithBackoff(operation, maxRetries = 5, initialDelay = 2000, maxDelay = 30000) {
   let retries = 0;
   let delay = initialDelay;
@@ -27,7 +25,6 @@ async function retryWithBackoff(operation, maxRetries = 5, initialDelay = 2000, 
     } catch (error) {
       retries++;
       
-      // If this was our last retry, throw the error
       if (retries >= maxRetries) {
         throw new Error(`Operation failed after ${maxRetries} retries: ${error.message}`);
       }
@@ -191,7 +188,6 @@ function createEmbeddingFunction() {
   };
 }
 
-// Add OpenAI embedding function
 function createOpenAIEmbeddingFunction() {
   return {
     generate: async (texts) => {
@@ -215,9 +211,6 @@ function createOpenAIEmbeddingFunction() {
     }
   };
 }
-
-// Add this new function for creating simple deterministic embeddings
-// This will be more reliable than trying to compute them on the fly
 
 function createSimpleEmbeddings(texts) {
   // Ensure texts is an array

@@ -1,0 +1,25 @@
+FROM node:18-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Create directories needed for the application
+RUN mkdir -p data/uploads
+RUN mkdir -p logs
+RUN mkdir -p creds
+
+# Copy application code
+COPY . .
+
+# Copy credentials into the container
+COPY ./creds/magiq-ai-fc9670291bfe.json /app/creds/magiq-ai-fc9670291bfe.json
+
+# Expose the port the app runs on
+EXPOSE 3000
+
+# Command to run the application
+CMD ["node", "server.js"]
